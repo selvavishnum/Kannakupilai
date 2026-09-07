@@ -867,21 +867,15 @@ function loadDB(){
   let raw=null;
   try{ raw=JSON.parse(localStorage.getItem(LS)||'null'); }catch(e){ raw=null; }
   DB=raw||{};
-  if(!DB.products||!DB.products.length){
-    DB.products=SEED_PRODUCTS.map((p,i)=>({id:'p'+(i+1),sku:p[0],nameEn:p[1],nameTa:p[2],category:p[3],
-      unit:p[4],cost:p[5],price:p[6],stock:p[7],barcode:'890'+String(1000+i)}));
-  }
+  /* ⚠️ SAMPLE ROWS ARE DEMO-ONLY. A till that has just been signed in must
+     show the shop's own catalog and nothing else — twenty-eight invented
+     vegetables at invented rates on a live counter is a mis-billing waiting
+     to happen. Seeding lives in seedDemo(), called only by startDemo(); a
+     real sign-in calls clearDemoData(). */
+  DB.products=DB.products||[];
   DB.bills=DB.bills||[];
-  DB.customers=DB.customers||[
-    {id:'c1',name:'Ramesh Anna',phone:'9842011223',due:0,loyalty:120},
-    {id:'c2',name:'Hotel Sai Sree',phone:'9445566778',due:840,loyalty:640},
-    {id:'c3',name:'Lakshmi Akka',phone:'9003344556',due:0,loyalty:60},
-  ];
-  DB.suppliers=DB.suppliers||[
-    {id:'s1',name:'Oddanchatram Mandi',phone:'9787012345',warehouse:'Main Counter'},
-    {id:'s2',name:'Local Farmer — Kani',phone:'9600123456',warehouse:'Main Counter'},
-    {id:'s3',name:'Cold Store Depot',phone:'9500998877',warehouse:'Cold Room'},
-  ];
+  DB.customers=DB.customers||[];
+  DB.suppliers=DB.suppliers||[];
   DB.settings=Object.assign({gstOn:false,gstRate:5,openingCash:2000,expenses:0,vpa:'tulasiveg@upi',seq:1,catalogManaged:false},DB.settings||{});
   DB.session=DB.session||null;
   saveDB();
@@ -1071,12 +1065,42 @@ function confirmShop(){
   saveIdent();
   DEMO=false;
   DB.session={cashier:_pendingMe.name,since:Date.now()};
+  const wiped=clearDemoData();
   saveDB(); startApp(); watchCatalog(); syncNow();
+  if(wiped) setTimeout(()=>toast('Demo items cleared — this till now shows '+(IDENT.shopName||'your shop')+"'s own list"),800);
 }
 /* Demo keeps the file useful without an account — and is explicit that
    nothing leaves the device, so nobody mistakes it for a live till. */
+/* The demo's sample shop, installed nowhere else. */
+function seedDemo(){
+  DB.products=SEED_PRODUCTS.map((p,i)=>({id:'p'+(i+1),sku:p[0],nameEn:p[1],nameTa:p[2],category:p[3],
+    unit:p[4],cost:p[5],price:p[6],stock:p[7],barcode:'890'+String(1000+i)}));
+  DB.customers=[
+    {id:'c1',name:'Ramesh Anna',phone:'9842011223',due:0,loyalty:120},
+    {id:'c2',name:'Hotel Sai Sree',phone:'9445566778',due:840,loyalty:640},
+    {id:'c3',name:'Lakshmi Akka',phone:'9003344556',due:0,loyalty:60},
+  ];
+  DB.suppliers=[
+    {id:'s1',name:'Oddanchatram Mandi',phone:'9787012345',warehouse:'Main Counter'},
+    {id:'s2',name:'Local Farmer — Kani',phone:'9600123456',warehouse:'Main Counter'},
+    {id:'s3',name:'Cold Store Depot',phone:'9500998877',warehouse:'Cold Room'},
+  ];
+  DB._demo=true;
+}
+/* Signing in for real replaces a demo book outright. Merging would leave
+   the demo's onion sitting beside the shop's own at a different price. */
+function clearDemoData(){
+  if(!DB._demo) return false;
+  DB.products=[]; DB.customers=[]; DB.suppliers=[]; DB.bills=[];
+  DB.settings.catalogManaged=false;
+  DB._demo=false;
+  try{ localStorage.removeItem(CAT_KEY); }catch(e){}
+  saveDB();
+  return true;
+}
 function startDemo(){
   DEMO=true;
+  seedDemo(); saveDB();
   IDENT={businessId:'demo',shopId:'demo',shopName:'Demo shop',terminal:'T1',uid:'demo',cashier:'Demo cashier',email:'',role:'owner'};
   saveIdent();          // without this a refresh drops back to the login screen
   DB.session={cashier:'Demo cashier',since:Date.now()};
@@ -1266,6 +1290,11 @@ function applyCatalog(cat,live){
     p.category=it.category||p.category||'Other';
     p.unit=it.unit||p.unit||'kg';
     p.price=+it.price||0; p.cost=+it.cost||0;
+    // Per-item GST, MRP, barcode and HSN come from the back office. gst is
+    // left undefined when the catalog does not set one, so calcTotals()
+    // falls back to the shop rate rather than charging 0%.
+    p.gst=(it.gst===undefined||it.gst===null||it.gst==='')?undefined:(+it.gst||0);
+    p.mrp=+it.mrp||0; p.hsn=it.hsn||''; if(it.barcode) p.barcode=it.barcode;
     p.stock=+(( +it.stock||0)-(pend[sku]||0)).toFixed(3);
     p.active=it.active!==false;
     if(!bySku[sku]){ DB.products.push(p); bySku[sku]=p; }
@@ -1440,7 +1469,7 @@ function qtyAdd(){
   if(ex) ex.qty=+(ex.qty+qty).toFixed(3);
   // sku + cat travel with the line so the rollup can break the day down by
   // product and by category without ever re-reading a bill.
-  else c.items.push({pid:p.id,sku:p.sku,cat:p.category,name:p.nameEn,nameTa:p.nameTa,unit:p.unit,rate:net,qty});
+  else c.items.push({pid:p.id,sku:p.sku,cat:p.category,gst:p.gst,name:p.nameEn,nameTa:p.nameTa,unit:p.unit,rate:net,qty});
   saveCarts(); closeModals(); renderAll();
   toast(p.nameEn+' · '+qtyFmt(qty,p.unit)+' '+p.unit+' = '+money(net*qty));
   // Refocusing search is right on a keyboard terminal and wrong on a phone,
@@ -1480,8 +1509,33 @@ function calcTotals(){
   let disc=dt==='pct'?sub*dv/100:dv;
   disc=Math.min(Math.max(disc,0),sub);
   const taxable=sub-disc;
-  const gst=DB.settings.gstOn?taxable*DB.settings.gstRate/100:0;
-  return {sub,disc,dv,dt,gst,total:taxable+gst,count:c.items.length};
+  /* GST is per item, not per bill. A grocery shelf carries 0%, 5%, 12% and
+     18% side by side, so one flat rate over the whole bill would be wrong
+     on almost every basket. An item with no rate of its own falls back to
+     the shop's rate, which is what keeps a vegetable shop's behaviour
+     exactly as it was. A bill discount is spread across the lines in
+     proportion, so tax is charged on what was actually paid. */
+  let gst=0; const breakup={};
+  if(DB.settings.gstOn){
+    const ratio=sub>0?taxable/sub:0;
+    c.items.forEach(i=>{
+      const r=(i.gst===undefined||i.gst===null||i.gst==='')?(+DB.settings.gstRate||0):(+i.gst||0);
+      if(r<=0) return;
+      const t=i.rate*i.qty*ratio*r/100;
+      gst+=t; breakup[r]=(breakup[r]||0)+t;
+    });
+  }
+  Object.keys(breakup).forEach(k=>{ breakup[k]=+breakup[k].toFixed(2); });
+  return {sub,disc,dv,dt,gst,breakup,total:taxable+gst,count:c.items.length};
+}
+/* One rate on the bill reads "@5%"; a mixed basket cannot honestly claim a
+   single number, so it says so and the receipt carries the split. */
+function gstLabel(t){
+  const rates=Object.keys(t.breakup||{});
+  if(!DB.settings.gstOn) return '';
+  if(rates.length===1) return '@'+rates[0]+'%';
+  if(rates.length>1)   return 'mixed';
+  return '@'+DB.settings.gstRate+'%';
 }
 
 function renderCart(){
@@ -1518,7 +1572,7 @@ function renderCart(){
   document.getElementById('t-sub').textContent=money(t.sub);
   document.getElementById('t-disc').textContent='−'+money(t.disc);
   document.getElementById('gst-row').style.display=DB.settings.gstOn?'':'none';
-  document.getElementById('gst-lbl').textContent=DB.settings.gstOn?'@'+DB.settings.gstRate+'%':'';
+  document.getElementById('gst-lbl').textContent=gstLabel(t);
   document.getElementById('t-gst').textContent=money(t.gst);
   document.getElementById('ck-total').textContent=money(t.total);
   document.getElementById('ck-items').textContent=t.count+(t.count===1?' item':' items');
@@ -1629,9 +1683,10 @@ function completeSale(){
     ts:Date.now(), date:new Date().toISOString().slice(0,10),
     cashier:DB.session.cashier, mode:c.mode,
     customer:document.getElementById('pay-cust').value.trim(),
-    items:c.items.map(i=>({sku:i.sku||'',cat:i.cat||'Other',name:i.name,nameTa:i.nameTa,unit:i.unit,rate:i.rate,qty:i.qty})),
+    items:c.items.map(i=>({sku:i.sku||'',cat:i.cat||'Other',gst:i.gst,name:i.name,nameTa:i.nameTa,unit:i.unit,rate:i.rate,qty:i.qty})),
     subtotal:+t.sub.toFixed(2), discount:+t.disc.toFixed(2), discType:t.dt, discVal:t.dv,
     gst:+t.gst.toFixed(2), gstRate:DB.settings.gstOn?DB.settings.gstRate:0,
+    gstBreakup:DB.settings.gstOn?t.breakup:{},
     total:+t.total.toFixed(2), payment:pay
   };
   // Decrement stock for catalogued items (custom lines have no pid)
@@ -1681,7 +1736,17 @@ function showReceipt(b){
     <hr>
     <div class="r"><span>Subtotal</span><span>${b.subtotal.toFixed(2)}</span></div>
     ${b.discount>0?`<div class="r"><span>Discount${b.discType==='pct'?' ('+b.discVal+'%)':''}</span><span>-${b.discount.toFixed(2)}</span></div>`:''}
-    ${b.gst>0?`<div class="r"><span>GST @${b.gstRate}%</span><span>${b.gst.toFixed(2)}</span></div>`:''}
+    ${(()=>{
+      if(!(b.gst>0)) return '';
+      // A mixed basket must print the split, not one averaged rate — this
+      // is the line the shop's GST return is built from.
+      const bk=b.gstBreakup||{}, rates=Object.keys(bk).sort((x,y)=>x-y);
+      if(rates.length>1) return rates.map(r=>
+        `<div class="r"><span>GST @${r}%</span><span>${(+bk[r]).toFixed(2)}</span></div>`).join('')
+        +`<div class="r"><span>GST total</span><span>${b.gst.toFixed(2)}</span></div>`;
+      const r=rates.length?rates[0]:b.gstRate;
+      return `<div class="r"><span>GST @${r}%</span><span>${b.gst.toFixed(2)}</span></div>`;
+    })()}
     <hr><div class="r" style="font-weight:700;font-size:14px"><span>TOTAL</span><span>${b.total.toFixed(2)}</span></div><hr>
     <div class="r"><span>Paid via</span><span>${pm}</span></div>
     ${b.payment.method==='cash'?`<div class="r"><span>Tendered</span><span>${b.payment.tendered.toFixed(2)}</span></div>
@@ -1925,8 +1990,13 @@ function exportData(){
   a.click(); URL.revokeObjectURL(a.href); toast('Exported');
 }
 function resetDemo(){
+  const pend=getQueue().length;
+  if(pend&&!confirm(pend+' bill(s) have not synced yet and will be LOST. Erase anyway?')) return;
   if(!confirm('Erase all bills, products and settings on this terminal?')) return;
-  localStorage.removeItem(LS); localStorage.removeItem(LS+'_carts'); location.reload();
+  localStorage.removeItem(LS); localStorage.removeItem(LS+'_carts');
+  localStorage.removeItem(CAT_KEY);
+  if(DEMO) localStorage.removeItem(ID_KEY);   // demo restarts at the login card
+  location.reload();
 }
 
 /* ══════════════ MOBILE CART SHEET ══════════════════════════════════════
@@ -2090,6 +2160,7 @@ if(IDENT&&!DEMO&&SHOP_SLUG&&(IDENT.shopSlug||'')!==SHOP_SLUG&&IDENT.businessId!=
 }
 if(DB.session&&IDENT){
   DEMO = IDENT.businessId==='demo';
+  if(!DEMO) clearDemoData();   // a real session must not inherit sample rows
   startApp();
   if(!DEMO){ watchCatalog(); syncNow(); }
 } else {
