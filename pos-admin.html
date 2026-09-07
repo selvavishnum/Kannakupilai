@@ -1480,6 +1480,10 @@ function pgPriceList(){
       <select class="inp" id="price-cat" style="max-width:170px" onchange="priceCat=this.value;drawPrices()"></select>
       <button class="btn ${priceFull?'btn-p':''}" onclick="priceFull=!priceFull;pgPriceList()">${priceFull?'Full view':'Basic view'}</button>
       <button class="btn" onclick="addCatalogItem()"><i data-i="plus"></i>Add</button>
+      <select class="inp" id="bulk-unit" style="max-width:180px" onchange="bulkUnit(this)">
+        <option value="">Set unit for shown…</option>
+        ${['kg','pcs','piece','g','l','box','pkt'].map(u=>`<option value="${u}">All shown → ${u}</option>`).join('')}
+      </select>
       <button class="btn" onclick="downloadCatalogCsv()"><i data-i="download"></i>CSV</button>
       <button class="btn" onclick="document.getElementById('csv-file').click()">Upload CSV</button>
       <input type="file" id="csv-file" accept=".csv,text/csv" style="display:none" onchange="uploadCatalogCsv(this)">
@@ -1528,9 +1532,7 @@ function _drawPrices(){
       +cats.map(c=>`<option value="${esc(c)}" ${c===priceCat?'selected':''}>${esc(c)}</option>`).join('');
   }
 
-  const q=priceQ.toLowerCase();
-  const rows=all.filter(r=>(!priceCat||r.category===priceCat)
-    && (!q||(r.sku+' '+(r.nameEn||'')+' '+(r.nameTa||'')+' '+(r.category||'')+' '+(r.barcode||'')).toLowerCase().includes(q)));
+  const rows=visibleRows();
 
   if(!rows.length){
     el.innerHTML=`<div class="card"><div class="empty">${all.length
@@ -1594,7 +1596,7 @@ function _drawPrices(){
       <td><input class="inp" style="height:34px;min-width:140px" value="${esc(r.nameEn||'')}" onchange="setCat('${esc(r.sku)}','nameEn',this.value)">
           <input class="inp" style="height:30px;margin-top:4px;font-size:12px;min-width:140px" placeholder="தமிழ் பெயர்" value="${esc(r.nameTa||'')}" onchange="setCat('${esc(r.sku)}','nameTa',this.value)"></td>
       ${txt(r.sku,'category',r.category,100)}
-      ${priceFull?txt(r.sku,'barcode',r.barcode,150,'8901234000012')+txt(r.sku,'hsn',r.hsn,104,'07031010'):''}
+      ${priceFull?txt(r.sku,'barcode',r.barcode,150,'— none —')+txt(r.sku,'hsn',r.hsn,104,'— none —'):''}
       <td><select class="inp" style="height:34px;width:76px" onchange="setCat('${esc(r.sku)}','unit',this.value)">
           ${['kg','pcs','g','l','box','pkt'].map(u=>`<option ${u===(r.unit||'kg')?'selected':''}>${u}</option>`).join('')}</select></td>
       ${num(r.sku,'cost',Math.round((+r.cost||0)*100)/100,84,'0.01')}
@@ -1619,6 +1621,31 @@ function setCat(sku,field,val){
 function markDirty(){
   const b=document.getElementById('price-save');
   if(b){ b.textContent='Save to all tills •'; b.classList.add('btn-p'); }
+}
+/* Their existing system exports every line as "piece", vegetables included.
+   That matters more than it looks: a unit that is not weighed skips the
+   quantity prompt at the till, so scanning tomatoes would bill one piece
+   instead of asking for the weight. Fixing two hundred rows one dropdown at
+   a time is not a thing anyone will do, so the filter is the selection:
+   filter to Vegetables, set them all to kg, done. */
+function bulkUnit(sel){
+  const u=sel.value; sel.value='';
+  if(!u) return;
+  const rows=visibleRows();
+  if(!rows.length) return toast('Nothing shown to change');
+  if(!confirm('Set the unit to "'+u+'" for all '+rows.length+' item'+(rows.length===1?'':'s')
+      +' shown'+(priceCat?' in '+priceCat:'')+'?')) return;
+  const c=CATS[priceShop];
+  rows.forEach(r=>{ if(c.items[r.sku]) c.items[r.sku].unit=u; });
+  drawPrices(); markDirty();
+  toast(rows.length+' item'+(rows.length===1?'':'s')+' set to '+u+' — press Save to send it to the tills');
+}
+/* One definition of "what is on screen", shared by the table and by any
+   action that operates on the current filter. */
+function visibleRows(){
+  const q=priceQ.toLowerCase();
+  return catRows(priceShop).filter(r=>(!priceCat||r.category===priceCat)
+    && (!q||(r.sku+' '+(r.nameEn||'')+' '+(r.nameTa||'')+' '+(r.category||'')+' '+(r.barcode||'')).toLowerCase().includes(q)));
 }
 function blankItem(){ return {nameEn:'',nameTa:'',category:'Vegetables',unit:'kg',
   cost:0,price:0,mrp:0,gst:0,stock:0,barcode:'',hsn:'',active:true}; }
@@ -1705,9 +1732,12 @@ const CSV_ALIASES={
           'englishname','english','productnameen','itemdescription'],
   // Tamil headers come out of other systems under a dozen spellings, and
   // one that fails to match silently drops the Tamil for the whole file.
-  nameTa:['nameta','tamil','tamilname','nametamil','tamil name','productnametamil',
-          'tamilproductname','localname','regionalname','நபெயர்','தமிழ்','தமிழ்பெயர்',
-          'nametamilname','producttamilname','tamildesc','tamildescription'],
+  // `Name2` is what the shop's existing system calls the Tamil name — 518 of
+  // 545 rows carry it, and an alias list that missed it silently dropped
+  // every Tamil name in the file.
+  nameTa:['name2','nameta','tamil','tamilname','nametamil','tamil name','productnametamil',
+          'tamilproductname','localname','regionalname','altname','alternatename','secondname',
+          'நபெயர்','தமிழ்','தமிழ்பெயர்','nametamilname','producttamilname','tamildesc','tamildescription'],
   category:['category','subcategory','maincategory','group','sub category','main category'],
   unit:['unit','uom','units'],
   barcode:['barcode','ean','upc','bar code'],
@@ -1716,7 +1746,8 @@ const CSV_ALIASES={
   mrp:['mrp','maxretailprice','max retail price'],
   gst:['gst','tax','gstrate','gst%','taxrate'],
   price:['price','sellingprice','sprice','spriceunit','rate','s.price/unit','selling price','sale price','sprice/unit'],
-  stock:['stock','instk','qty','quantity','onhand','in stk','instock'],
+  stock:['instockqty','stock','instk','qty','quantity','onhand','in stk','instock',
+         'stockqty','qtyinstock','availableqty','closingstock','balanceqty'],
   active:['active','onsale','showme','pos','show me','show-me','enabled'],
 };
 const csvNorm=h=>String(h||'').toLowerCase().replace(/[\s._\-\/]/g,'');
@@ -1750,18 +1781,37 @@ function applyCatalogCsv(text){
     return toast('No price column found. Expected one named Price, Selling Price or S.Price/unit');
 
   const items=CATS[priceShop].items, edited=(_stockEdited[priceShop]=_stockEdited[priceShop]||{});
-  let added=0, updated=0, skipped=0, zeroPriced=0, fromMrp=0;
-  const pick=(r,f)=>map[f]===undefined?undefined:(r[map[f]]||'').trim();
+  let added=0, updated=0, zeroPriced=0, fromMrp=0;
+  const noSku=[], dupes=[], seen={}; let negStock=0;
+  // Free text out of another system arrives with stray newlines and runs of
+  // spaces in it; one row in the real file was a name spread over ten lines.
+  const clean=v=>String(v==null?'':v).replace(/\s+/g,' ').trim();
+  const pick=(r,f)=>map[f]===undefined?undefined:clean(r[map[f]]);
   // Named num2, not money — `money` is already a global formatter here and
   // shadowing it inside this function would be a trap for the next reader.
   const num2=v=>{ if(v===undefined||v==='') return undefined;
     const x=parseFloat(String(v).replace(/[₹,\s]/g,'')); return isNaN(x)?undefined:Math.round(x*100)/100; };
 
-  rows.slice(1).forEach(r=>{
+  rows.slice(1).forEach((r,i)=>{
     const sku=catKey((pick(r,'sku')||'').toUpperCase());
-    if(!sku){ skipped++; return; }
+    const label=pick(r,'nameEn')||pick(r,'nameTa')||'(no name)';
+    /* The code comes from the file and nowhere else — never invented, never
+       taken from some other id column. A product with no code is therefore
+       not importable, but it must not vanish quietly either: 79 rows of the
+       real file had none, and several were real produce lines. They are
+       listed and downloadable so they can be fixed at the source. */
+    if(!sku){ noSku.push({row:i+2,name:label}); return; }
+    const twice=!!seen[sku];
+    if(twice) dupes.push({row:i+2,sku,name:label,first:seen[sku]});
+    seen[sku]=label;
     const exists=!!items[sku];
-    const it=items[sku]||blankItem();
+    /* "A column absent from the file keeps the stored value" is the right
+       rule for a RE-upload — a price-only file should change prices alone.
+       It is the wrong rule for the same code appearing twice inside ONE
+       file: merging row two onto row one produced an item wearing the last
+       row's name and the first row's price. Within a file, the last row
+       replaces. */
+    const it=twice?blankItem():(items[sku]||blankItem());
     // A column absent from the file must not wipe the value already held —
     // a price-only upload should change prices and nothing else.
     ['nameEn','nameTa','category','unit','barcode','hsn'].forEach(f=>{
@@ -1779,7 +1829,7 @@ function applyCatalogCsv(text){
     const st=num2(pick(r,'stock'));
     // Stock from a file IS a deliberate recount, so it outranks the tills —
     // same rule as typing it into the box.
-    if(st!==undefined){ it.stock=Math.round(st*1000)/1000; edited[sku]=true; }
+    if(st!==undefined){ it.stock=Math.round(st*1000)/1000; edited[sku]=true; if(st<0) negStock++; }
     const act=pick(r,'active');
     if(act!==undefined&&act!=='') it.active=!/^(no|false|0|off|hide|hidden|inactive)$/i.test(act.trim());
     items[sku]=it;
@@ -1787,11 +1837,25 @@ function applyCatalogCsv(text){
   });
   priceQ=''; priceCat='';
   drawPrices(); markDirty();
-  _csvReport={map, header:rows[0], added, updated, skipped, zeroPriced, fromMrp,
-              total:Object.keys(items).length};
+  _csvReport={map, header:rows[0], added, updated, skipped:noSku.length, zeroPriced, fromMrp,
+              noSku, dupes, negStock, total:Object.keys(items).length};
   renderCsvReport();
-  toast(added+' added · '+updated+' updated'+(skipped?' · '+skipped+' skipped (no SKU)':'')
+  toast(added+' added · '+updated+' updated'+(noSku.length?' · '+noSku.length+' skipped (no SKU)':'')
     +' — nothing is live until you press Save');
+}
+
+/* The rows that need fixing, as a file — because "79 rows had no code" is
+   only actionable if you can see which 79. */
+function downloadCsvProblems(){
+  const r=_csvReport; if(!r) return;
+  const lines=['problem,row_in_file,code,product'];
+  r.noSku.forEach(x=>lines.push(['no code',x.row,'','"'+String(x.name).replace(/"/g,'""')+'"'].join(',')));
+  r.dupes.forEach(x=>lines.push(['duplicate code',x.row,x.sku,'"'+String(x.name).replace(/"/g,'""')+'"'].join(',')));
+  if(lines.length===1) return toast('Nothing to fix');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}));
+  a.download='rows-to-fix-'+iso(new Date())+'.csv';
+  a.click(); URL.revokeObjectURL(a.href);
 }
 
 /* What the file actually did. "Prices are all zero" is impossible to debug
@@ -1822,6 +1886,18 @@ function renderCsvReport(){
         ${warn?`<div style="margin-top:8px;color:#7a5518"><b>${r.zeroPriced} item${r.zeroPriced===1?'':'s'} still have no price</b>
           and will bill at ₹0. Find the column your file keeps the selling price in and re-upload with it,
           or type the prices in below.</div>`:''}
+        ${r.noSku.length?`<div style="margin-top:8px;color:#7a5518">
+          <b>${r.noSku.length} row${r.noSku.length===1?'':'s'} had no code</b> and were left out —
+          the code always comes from your file, never invented here.
+          ${esc(r.noSku.slice(0,6).map(x=>x.name).join(', '))}${r.noSku.length>6?' …':''}
+          <button class="btn" style="height:26px;padding:0 8px;margin-left:6px" onclick="downloadCsvProblems()">Download the list</button></div>`:''}
+        ${r.dupes.length?`<div style="margin-top:8px;color:#7a5518">
+          <b>${r.dupes.length} code${r.dupes.length===1?'':'s'} appear twice</b> in the file
+          (${esc(r.dupes.slice(0,5).map(x=>x.sku).join(', '))}${r.dupes.length>5?' …':''}) —
+          only the last row of each was kept. Two products cannot share one code.</div>`:''}
+        ${r.negStock?`<div style="margin-top:8px;color:var(--ink-3)">
+          ${r.negStock} item${r.negStock===1?'':'s'} came in with a negative stock count — imported as-is,
+          because that is what your file says. Recount them when you get a chance.</div>`:''}
         ${ignored.length?`<div style="margin-top:8px;color:var(--ink-3)">
           Columns not used: ${ignored.map(h=>'<span class="mono">'+esc(h)+'</span>').join(', ')}</div>`:''}
       </div>
