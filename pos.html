@@ -541,8 +541,15 @@ table.d tr.click:hover td{background:var(--raised)}
             <input class="inp" id="search-input" placeholder="Search item / தமிழ் பெயர் / barcode" oninput="renderProducts()">
             <button class="clr" onclick="clearSearch()" aria-label="Clear"><i data-i="x"></i></button>
           </div>
+          <button class="btn" id="grid-btn" onclick="toggleGrid()" title="Show or hide the product grid"
+            style="flex:0 0 auto;height:38px;padding:0 11px"></button>
         </div>
         <div class="cats scroll" id="cat-chips"></div>
+        <div id="grid-off" class="grid-empty hidden">
+          <b>Product grid is off</b><br>
+          Scan or type a code in the SKU box (F1), or search by name (F2).
+          <button class="btn" style="margin-top:12px" onclick="toggleGrid()">Show the grid</button>
+        </div>
         <div id="product-grid" class="scroll"></div>
       </div>
 
@@ -569,7 +576,7 @@ table.d tr.click:hover td{background:var(--raised)}
         </div>
         <div class="grand"><span class="k" id="ck-items">0 items</span><span class="v" id="ck-total">₹0.00</span></div>
         <div class="pays">
-          <button class="pay cash" id="pay-cash-btn" onclick="openPayment('cash')"><span class="t">Cash</span><span class="k">F8</span></button>
+          <button class="pay cash" id="pay-cash-btn" onclick="DB.settings.fastCash?fastCashSale():openPayment('cash')"><span class="t">Cash</span><span class="k">F8</span></button>
           <button class="pay upi"  id="pay-upi-btn"  onclick="openPayment('upi')"><span class="t">GPay / UPI</span><span class="k">F9</span></button>
           <button class="pay card" id="pay-card-btn" onclick="openPayment('card')"><span class="t">Card</span><span class="k">Split</span></button>
         </div>
@@ -876,7 +883,8 @@ function loadDB(){
   DB.bills=DB.bills||[];
   DB.customers=DB.customers||[];
   DB.suppliers=DB.suppliers||[];
-  DB.settings=Object.assign({gstOn:false,gstRate:5,openingCash:2000,expenses:0,vpa:'tulasiveg@upi',seq:1,catalogManaged:false},DB.settings||{});
+  DB.settings=Object.assign({gstOn:false,gstRate:5,openingCash:2000,expenses:0,vpa:'',seq:1,catalogManaged:false,
+    printLang:'both',fastCash:false,store:'',address:'',phone:'',gstin:''},DB.settings||{});
   DB.session=DB.session||null;
   saveDB();
 }
@@ -1303,9 +1311,13 @@ function applyCatalog(cat,live){
   // here — hidden rather than deleted, so a bad edit is recoverable.
   DB.products.forEach(p=>{ if(!(p.sku in cat.items)) p.active=false; });
   const s=cat.settings||{};
-  if('gstOn' in s)   DB.settings.gstOn=!!s.gstOn;
-  if('gstRate' in s) DB.settings.gstRate=+s.gstRate||0;
-  if(s.vpa)          DB.settings.vpa=s.vpa;
+  if('gstOn' in s)     DB.settings.gstOn=!!s.gstOn;
+  if('gstRate' in s)   DB.settings.gstRate=+s.gstRate||0;
+  if('fastCash' in s)  DB.settings.fastCash=!!s.fastCash;
+  if(s.vpa)       DB.settings.vpa=s.vpa;
+  if(s.printLang) DB.settings.printLang=s.printLang;
+  // Receipt header is per shop — five of six shops are not in Thuckalay.
+  ['store','address','phone','gstin'].forEach(k=>{ if(k in s) DB.settings[k]=s[k]||''; });
   DB.settings.catalogManaged=true;
   saveDB();
   if(!document.getElementById('app').classList.contains('hidden')) renderAll();
@@ -1371,7 +1383,17 @@ function renderMode(){
   document.getElementById('cart-mode-badge').textContent=cart().mode;
 }
 
-/* ══════════════ PRODUCTS ══════════════ */
+/* ══════════════ PRODUCTS ══════════════
+   A counter with five hundred lines does not want to look at five hundred
+   tiles — it scans. The grid is therefore a per-TERMINAL preference, not a
+   shop setting: the scanner counter hides it, the touch counter keeps it,
+   both in the same shop. */
+let gridHidden=(()=>{ try{ return localStorage.getItem('anpos_grid')==='0'; }catch(e){ return false; } })();
+function saveGridPref(){ try{ localStorage.setItem('anpos_grid',gridHidden?'0':'1'); }catch(e){} }
+function toggleGrid(){
+  gridHidden=!gridHidden; saveGridPref(); renderProducts();
+  if(gridHidden&&!isMobile()) document.getElementById('sku-input')?.focus();
+}
 function renderCats(){
   const cats=[...new Set(onSale().map(p=>p.category))].sort();
   document.getElementById('cat-chips').innerHTML=
@@ -1386,6 +1408,15 @@ function matches(p,q){
 }
 function renderProducts(){
   const q=document.getElementById('search-input').value;
+  const off=document.getElementById('grid-off'), btn=document.getElementById('grid-btn');
+  // A search is an explicit request to see matches, so it overrides the
+  // hidden preference for as long as the box has text in it.
+  const hide=gridHidden&&!q&&!catFilter;
+  if(btn) btn.textContent=gridHidden?'Grid off':'Grid on';
+  if(btn) btn.className='btn'+(gridHidden?'':' btn-p');
+  if(off) off.classList.toggle('hidden',!hide);
+  document.getElementById('product-grid').classList.toggle('hidden',hide);
+  if(hide) return;
   const list=onSale().filter(p=>matches(p,q)&&(!catFilter||p.category===catFilter));
   const grid=document.getElementById('product-grid');
   if(!list.length){
@@ -1417,11 +1448,42 @@ function renderProducts(){
       </div></button>`).join('');
 }
 function clearSearch(){ const s=document.getElementById('search-input'); s.value=''; renderProducts(); s.focus(); }
+/* An exact-match-only SKU box fails on everything a counter actually types:
+   a code with a stray space, a shop that uses short codes, a barcode read
+   half-way. Widen it in strict-to-loose order and never guess when the
+   answer is ambiguous — an ambiguous code drops into search instead, which
+   shows the choices rather than billing the wrong item. */
 function skuEnter(){
-  const el=document.getElementById('sku-input'), v=el.value.trim().toLowerCase();
+  const el=document.getElementById('sku-input');
+  const raw=el.value.trim(), v=raw.toLowerCase().replace(/\s+/g,'');
   if(!v) return;
-  const p=onSale().find(x=>x.sku.toLowerCase()===v||(x.barcode||'')===v);
-  if(p){ addToCart(p.id); el.value=''; } else { toast('No item with SKU / barcode '+v,'error'); el.select(); }
+  const list=onSale();
+  const norm=x=>String(x||'').toLowerCase().replace(/\s+/g,'');
+
+  let p=list.find(x=>norm(x.sku)===v) || list.find(x=>norm(x.barcode)===v);
+  if(!p){
+    const pre=list.filter(x=>norm(x.sku).startsWith(v)||norm(x.barcode).startsWith(v));
+    if(pre.length===1) p=pre[0];
+    else if(!pre.length){
+      const sub=list.filter(x=>norm(x.sku).includes(v)||norm(x.barcode).includes(v));
+      if(sub.length===1) p=sub[0];
+    }
+  }
+  if(p){ addOne(p); el.value=''; return; }
+
+  // Not a code — hand it to search rather than making the cashier retype it.
+  const si=document.getElementById('search-input');
+  const hits=list.filter(x=>matches(x,raw));
+  el.value='';
+  if(hits.length){
+    si.value=raw; catFilter=''; gridHidden=false; saveGridPref();
+    renderCats(); renderProducts();
+    toast(hits.length+' item'+(hits.length===1?'':'s')+' match “'+raw+'” — pick one');
+    if(!isMobile()) si.focus();
+  }else{
+    toast('Nothing found for “'+raw+'”','error');
+    el.value=raw; el.select();
+  }
 }
 
 /* ══════════════ QUANTITY PROMPT ══════════════
@@ -1430,6 +1492,24 @@ function skuEnter(){
    is what the cashier actually has in hand at that moment; guessing 0.5 kg
    and correcting it afterwards is two edits instead of one entry. */
 let _qtyProduct=null;
+/* Units that are weighed need a quantity typed; units that are counted do
+   not. A barcode scanner sends the code and an Enter, so popping a quantity
+   box on a packet of appalam costs a second keystroke on every single scan
+   — twenty extra keys on a twenty-item basket. Scanning a packet means one
+   packet. Tapping the tile still opens the box, because a finger on a tile
+   is not a statement about quantity. */
+const WEIGHED=['kg','g','l','ml'];
+function addOne(p){
+  if(!p) return;
+  if(WEIGHED.includes(p.unit)) return addToCart(p.id);
+  const c=cart(), net=+p.price||0;
+  const ex=c.items.find(i=>i.pid===p.id&&i.rate===net);
+  if(ex) ex.qty=+(ex.qty+1).toFixed(3);
+  else c.items.push({pid:p.id,sku:p.sku,cat:p.category,gst:p.gst,name:p.nameEn,
+                     nameTa:p.nameTa,unit:p.unit,rate:net,qty:1});
+  saveCarts(); renderAll();
+  toast(p.nameEn+' × '+(ex?ex.qty:1)+(net?' = '+money(net*(ex?ex.qty:1)):' — no price set'),net?'':'error');
+}
 function addToCart(pid){
   const p=DB.products.find(x=>x.id===pid); if(!p) return;
   _qtyProduct=p;
@@ -1654,12 +1734,24 @@ function drawQR(){
   document.getElementById('qr-box').innerHTML=s+'</div>';
 }
 
-function completeSale(){
+/* One-key cash sale. Their previous system printed the moment F8 was hit,
+   with no dialog — which is the right trade at a vegetable counter taking
+   exact change all day, and the wrong one where change has to be worked
+   out. So it is a per-shop setting, not a decision made for them.
+   Tendered is recorded as exact: claiming a tender nobody counted would
+   put a false change figure on the customer's receipt. */
+function fastCashSale(){
+  const t=calcTotals();
+  if(!t.count){ toast('Cart is empty','error'); return; }
+  completeSale({method:'cash',tendered:+t.total.toFixed(2),change:0,fast:true});
+}
+function completeSale(fastPay){
   const t=calcTotals();
   if(!t.count) return;
   const c=cart();
-  let pay={method:payMethod};
-  if(payMethod==='cash'){
+  let pay=fastPay||{method:payMethod};
+  if(fastPay){ /* nothing to read from the payment dialog */ }
+  else if(payMethod==='cash'){
     const g=parseFloat(document.getElementById('pay-tendered').value)||0;
     if(g<t.total-0.001) return toast('Cash tendered is less than the total','error');
     pay.tendered=g; pay.change=+(g-t.total).toFixed(2);
@@ -1718,20 +1810,33 @@ function setPaper(p){
   document.getElementById('p58').classList.toggle('on',p===58);
   document.getElementById('p80').classList.toggle('on',p===80);
 }
+/* Which name goes on the paper. Tamil is what the customer reads, English
+   is what a cheap thermal printer can always render — so the shop chooses,
+   per shop, and a line with no Tamil name silently falls back to English
+   rather than printing an empty row. */
+function billName(i){
+  const lang=(DB.settings.printLang||'both');
+  const en=i.name||'', ta=i.nameTa||'';
+  if(lang==='ta') return ta||en;
+  if(lang==='en') return en||ta;
+  return (ta&&en&&ta!==en)?en+' / '+ta:(en||ta);
+}
 function showReceipt(b){
-  const d=new Date(b.ts);
+  const d=new Date(b.ts), S=DB.settings;
   const pm=b.payment.method==='cash'?'CASH':b.payment.method==='upi'?'UPI':b.payment.method==='card'?'CARD':'SPLIT';
   document.getElementById('receipt-print').innerHTML=`
     <div style="text-align:center">
-      <div style="font-weight:700;font-size:13px">${esc((IDENT&&IDENT.shopName)||'TULASI VEGETABLES MARKET').toUpperCase()}</div>
-      <div>Thuckalay, Kanyakumari</div><div>Ph 98420 11223</div>
+      <div style="font-weight:700;font-size:13px">${esc(S.store||(IDENT&&IDENT.shopName)||'ARTHANOTE POS').toUpperCase()}</div>
+      ${S.address?`<div>${esc(S.address)}</div>`:''}
+      ${S.phone?`<div>Ph ${esc(S.phone)}</div>`:''}
+      ${S.gstin?`<div>GSTIN ${esc(S.gstin)}</div>`:''}
     </div><hr>
     <div class="r"><span>Bill: ${esc(b.billNo)}</span><span>${esc(b.mode)}</span></div>
     <div class="r"><span>${d.toLocaleDateString('en-IN')}</span><span>${d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</span></div>
     <div>Cashier: ${esc(b.cashier)}</div>
     ${b.customer?`<div>Customer: ${esc(b.customer)}</div>`:''}
     <hr><div class="r" style="font-weight:700"><span>ITEM</span><span>AMOUNT</span></div><hr>
-    ${b.items.map(i=>`<div>${esc(i.name)}</div>
+    ${b.items.map(i=>`<div>${esc(billName(i))}</div>
       <div class="r"><span>&nbsp;&nbsp;${qtyFmt(i.qty,i.unit)} ${esc(i.unit)} × ${i.rate}</span><span>${(i.rate*i.qty).toFixed(2)}</span></div>`).join('')}
     <hr>
     <div class="r"><span>Subtotal</span><span>${b.subtotal.toFixed(2)}</span></div>
@@ -2093,6 +2198,7 @@ document.addEventListener('keydown',e=>{
       e.preventDefault();
       if(modalOpen('m-pay')) completeSale();
       else if(modalOpen('m-receipt')) window.print();
+      else if(DB.settings.fastCash) fastCashSale();
       else openPayment('cash');
       return;
     case 'F9':
