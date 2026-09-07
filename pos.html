@@ -102,6 +102,9 @@ svg{display:block}
 
 /* ══════════ OTP ══════════ */
 #otp-screen{position:fixed;inset:0;z-index:60;background:var(--page);display:flex;align-items:center;justify-content:center;padding:20px}
+.bound{margin-top:7px;font-size:12px;line-height:1.5;padding:8px 10px;border-radius:8px;border:1px solid}
+.bound.ok{background:var(--accent-soft);border-color:var(--accent-line);color:var(--ink-2)}
+.bound.warn{background:#fff8ec;border-color:#f2dcb4;color:#7a5518}
 .otp-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:30px;width:100%;max-width:370px}
 .otp-brand{display:flex;align-items:center;gap:11px;margin-bottom:22px}
 .otp-logo{width:40px;height:40px;border-radius:10px;background:var(--accent);display:grid;place-items:center;font-size:19px}
@@ -473,6 +476,7 @@ table.d tr.click:hover td{background:var(--raised)}
       <div class="fg">
         <label class="lbl" for="li-shop">Which shop is this counter in?</label>
         <select class="inp" id="li-shop"></select>
+        <div id="shop-bound" class="bound" style="display:none"></div>
       </div>
       <div class="fg">
         <label class="lbl" for="li-term">Terminal name</label>
@@ -878,7 +882,7 @@ function loadDB(){
     {id:'s2',name:'Local Farmer — Kani',phone:'9600123456',warehouse:'Main Counter'},
     {id:'s3',name:'Cold Store Depot',phone:'9500998877',warehouse:'Cold Room'},
   ];
-  DB.settings=Object.assign({gstOn:false,gstRate:5,openingCash:2000,expenses:0,vpa:'tulasiveg@upi',seq:1},DB.settings||{});
+  DB.settings=Object.assign({gstOn:false,gstRate:5,openingCash:2000,expenses:0,vpa:'tulasiveg@upi',seq:1,catalogManaged:false},DB.settings||{});
   DB.session=DB.session||null;
   saveDB();
 }
@@ -890,6 +894,12 @@ function loadCarts(){
   CARTS=(Array.isArray(c)&&c.length===5)?c:[blankCart(),blankCart(),blankCart(),blankCart(),blankCart()];
 }
 function saveCarts(){ try{ localStorage.setItem(LS+'_carts',JSON.stringify(CARTS)); }catch(e){} }
+
+/* A shop's catalog decides what that shop sells. Lines the back office
+   switched off — or that belong to another shop's list — stay in the local
+   DB (so an accidental deactivation is instantly reversible) but never
+   appear on the till. */
+const onSale=()=>DB.products.filter(p=>p.active!==false);
 
 const cart=()=>CARTS[active];
 const money=n=>'₹'+(Math.round((n+Number.EPSILON)*100)/100).toFixed(2);
@@ -932,6 +942,49 @@ try{
 const Q_KEY=LS+'_queue';                       // bills waiting to sync
 const ID_KEY=LS+'_identity';                   // businessId / shopId / terminal
 let IDENT=null, DEMO=false, syncing=false;
+
+/* ══════════════ THE URL IS THE SHOP ═══════════════════════════════════
+   thuckalay.arthanote.com/pos  →  the Thuckalay counter, always.
+   A terminal is set up once by bookmarking its own subdomain, and no
+   cashier can then pick the wrong shop from a dropdown at 6am. Each
+   subdomain is also a separate browser origin, so Thuckalay's localStorage
+   — its queue, its carts, its catalog — physically cannot be read by the
+   Monday Market terminal even on the same laptop.
+
+   Everything still lives under ONE businessId, so the owner's nightly
+   check across all six shops stays a single query. The subdomain picks the
+   shop; it does not fragment the business.
+
+   Hosts that are NOT a shop: the bare domain, www, previews, localhost. On
+   those the shop dropdown works exactly as before. */
+const RESERVED_SUB=['www','arthanote','app','api','admin','staging','dev','test','preview','pos'];
+function shopSlugFromHost(){
+  const h=(location.hostname||'').toLowerCase();
+  if(!h||h==='localhost'||/^\d{1,3}(\.\d{1,3}){3}$/.test(h)||h.endsWith('.vercel.app')) return '';
+  const parts=h.split('.');
+  if(parts.length<3) return '';                       // arthanote.com — no shop
+  const first=parts[0];
+  if(RESERVED_SUB.includes(first)) return '';
+  return /^[a-z0-9-]{1,40}$/.test(first)?first:'';
+}
+const SHOP_SLUG=shopSlugFromHost();
+const slugify=s=>String(s||'').toLowerCase().normalize('NFKD')
+  .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+/* Shops in `config` are keyed s1..s4 and were never given a slug field, so
+   match tolerantly rather than forcing every existing business to re-key
+   their shops before a subdomain works. Priority: explicit slug, shop id,
+   full slugified name, then the name's leading word ("thuckalay" matching
+   "Thuckalay Vegetables"). Returns the shop id, or '' if nothing matches. */
+function matchShopBySlug(shops,slug){
+  if(!slug) return '';
+  const ent=Object.entries(shops||{});
+  for(const [id,s] of ent) if(slugify(s&&s.slug)===slug) return id;
+  for(const [id] of ent) if(slugify(id)===slug) return id;
+  for(const [id,s] of ent) if(slugify(s&&s.name)===slug) return id;
+  // "thuckalay" matching "Thuckalay Vegetables" — the shop's leading word
+  for(const [id,s] of ent) if(slugify(s&&s.name).startsWith(slug+'-')) return id;
+  return '';
+}
 
 function loadIdent(){ try{ IDENT=JSON.parse(localStorage.getItem(ID_KEY)||'null'); }catch(e){ IDENT=null; } }
 function saveIdent(){ try{ localStorage.setItem(ID_KEY,JSON.stringify(IDENT)); }catch(e){} }
@@ -982,6 +1035,24 @@ function askShop(me,shops){
     : '<option value="s1">Main counter</option>';
   const prev=IDENT&&IDENT.businessId===me.businessId?IDENT:null;
   if(prev&&entries.some(([id])=>id===prev.shopId)) sel.value=prev.shopId;
+
+  // Bound subdomain: the address decides the shop, so the dropdown is locked.
+  // A slug that matches nothing is NOT fatal — a mistyped DNS record must not
+  // stop a counter from billing, so it falls back to the picker and says why.
+  const bound=matchShopBySlug(shops,SHOP_SLUG);
+  const note=document.getElementById('shop-bound');
+  sel.disabled=false; note.style.display='none';
+  if(SHOP_SLUG&&bound){
+    sel.value=bound; sel.disabled=true;
+    note.innerHTML='Locked to <b>'+esc(sel.selectedOptions[0]?.textContent||bound)
+      +'</b> by this address ('+esc(location.hostname)+'). Bookmark it on this counter.';
+    note.className='bound ok'; note.style.display='block';
+  }else if(SHOP_SLUG){
+    note.innerHTML='No shop is named <b>'+esc(SHOP_SLUG)+'</b> in your settings, so pick it below. '
+      +'To lock this address to a shop, set that shop’s <b>slug</b> to <b>'+esc(SHOP_SLUG)+'</b> in the back office.';
+    note.className='bound warn'; note.style.display='block';
+  }
+
   document.getElementById('li-term').value=(prev&&prev.terminal)||'T1';
   document.getElementById('login-step').classList.add('hidden');
   document.getElementById('shop-step').classList.remove('hidden');
@@ -995,11 +1066,12 @@ function confirmShop(){
     err.style.display='block'; return;
   }
   IDENT={businessId:_pendingMe.businessId,shopId:sel.value,shopName:sel.selectedOptions[0]?.textContent||sel.value,
+         shopSlug:SHOP_SLUG,
          terminal:term,uid:_pendingMe.uid,cashier:_pendingMe.name,email:_pendingMe.email,role:_pendingMe.role};
   saveIdent();
   DEMO=false;
   DB.session={cashier:_pendingMe.name,since:Date.now()};
-  saveDB(); startApp(); syncNow();
+  saveDB(); startApp(); watchCatalog(); syncNow();
 }
 /* Demo keeps the file useful without an account — and is explicit that
    nothing leaves the device, so nobody mistakes it for a live till. */
@@ -1021,6 +1093,8 @@ function logout(){
   const pend=getQueue().length;
   if(pend&&!confirm(pend+' bill(s) have not synced yet. They stay on this device — log out anyway?')) return;
   DB.session=null; saveDB();
+  if(CAT_UNSUB){ CAT_UNSUB(); CAT_UNSUB=null; }   // stop billing for reads nobody is watching
+  CATALOG_OK=false;
   if(FB_OK&&AUTH.currentUser) AUTH.signOut().catch(()=>{});
   document.getElementById('app').classList.add('hidden');
   document.getElementById('otp-screen').classList.remove('hidden');
@@ -1045,35 +1119,72 @@ function syncNow(){
   const q=getQueue();
   if(!q.length){ updateSyncPill(); return; }
   syncing=true; updateSyncPill();
-  const chunk=q.slice(0,20);             // 20 bills = 40 batch ops, well under 500
+  /* A bill belongs to the shop it was RUNG UP IN, not to whichever shop the
+     terminal happens to be pointed at when the queue finally drains. Stamping
+     the current IDENT over an old bill would quietly move yesterday's Monday
+     Market sales into Thuckalay's books after a re-login. Bills from another
+     business can never pass the rules, so they are left queued and counted
+     rather than blocking the batch forever. */
+  const mine=q.filter(b=>(b.businessId||IDENT.businessId)===IDENT.businessId);
+  if(!mine.length){ syncing=false; updateSyncPill(); return; }
+  const chunk=mine.slice(0,20);          // 20 bills = 40 batch ops, well under 500
   const batch=FS.batch();
   const rollups={};
+  const stock={};                        // shopId -> sku -> qty sold
   chunk.forEach(b=>{
+    const sid=b.shopId&&b.shopId!=='local'?b.shopId:IDENT.shopId;
     const ref=FS.collection('pos_bills').doc(b.id);
     batch.set(ref,Object.assign({},b,{
-      businessId:IDENT.businessId, shopId:IDENT.shopId, terminal:IDENT.terminal,
+      businessId:IDENT.businessId, shopId:sid, terminal:b.terminal||IDENT.terminal,
       syncedAt:firebase.firestore.FieldValue.serverTimestamp()
     }));
-    const rk=IDENT.businessId+'_'+IDENT.shopId+'_'+b.date;
-    const r=rollups[rk]=rollups[rk]||{date:b.date,bills:0,sales:0,cash:0,upi:0,card:0};
+    const rk=IDENT.businessId+'_'+sid+'_'+b.date;
+    const r=rollups[rk]=rollups[rk]||{date:b.date,shopId:sid,bills:0,sales:0,cash:0,upi:0,card:0,items:{},cats:{}};
     r.bills++; r.sales+=b.total;
     const m=b.payment.method;
     if(m==='cash') r.cash+=b.total;
     else if(m==='upi') r.upi+=b.total;
     else if(m==='card') r.card+=b.total;
     else { r.cash+=b.payment.cash||0; r.upi+=b.payment.upi||0; }
+    // Product-wise and category-wise, accumulated into the same day document.
+    // This is the whole point: the nightly "what sold in each shop" check
+    // becomes six document reads instead of three thousand bill reads.
+    (b.items||[]).forEach(i=>{
+      const line=(+i.rate||0)*(+i.qty||0);
+      const sk=catKey(i.sku||'__custom'), ck=catKey(i.cat||'Other');
+      const ri=r.items[sk]=r.items[sk]||{qty:0,sales:0,name:i.name||sk};
+      ri.qty+=(+i.qty||0); ri.sales+=line;
+      const rc=r.cats[ck]=r.cats[ck]||{qty:0,sales:0};
+      rc.qty+=(+i.qty||0); rc.sales+=line;
+      if(i.sku){ const s=stock[sid]=stock[sid]||{}; s[catKey(i.sku)]=(s[catKey(i.sku)]||0)+(+i.qty||0); }
+    });
   });
   // One rollup document per shop per day, incremented — this is what the back
   // office reads, so a 90-day report is 90 documents rather than 45,000 bills.
   const inc=firebase.firestore.FieldValue.increment;
+  const r2=n=>+(+n||0).toFixed(2), r3=n=>+(+n||0).toFixed(3);
   Object.entries(rollups).forEach(([rk,r])=>{
+    const items={}, cats={};
+    Object.entries(r.items).forEach(([k,v])=>{ items[k]={qty:inc(r3(v.qty)),sales:inc(r2(v.sales)),name:v.name}; });
+    Object.entries(r.cats).forEach(([k,v])=>{ cats[k]={qty:inc(r3(v.qty)),sales:inc(r2(v.sales))}; });
+    const named=r.shopId===IDENT.shopId?(IDENT.shopName||r.shopId):r.shopId;
     batch.set(FS.collection('pos_rollups').doc(rk),{
-      businessId:IDENT.businessId, shopId:IDENT.shopId, date:r.date,
-      bills:inc(r.bills), sales:inc(+r.sales.toFixed(2)),
-      cash:inc(+r.cash.toFixed(2)), upi:inc(+r.upi.toFixed(2)), card:inc(+r.card.toFixed(2)),
+      businessId:IDENT.businessId, shopId:r.shopId, shopName:named, date:r.date,
+      bills:inc(r.bills), sales:inc(r2(r.sales)),
+      cash:inc(r2(r.cash)), upi:inc(r2(r.upi)), card:inc(r2(r.card)),
+      items:items, cats:cats,
       updatedAt:firebase.firestore.FieldValue.serverTimestamp()
     },{merge:true});
   });
+  // Stock comes off the shop's own catalog as an increment, so two counters
+  // selling the same onion at the same moment both land. Only the shop this
+  // terminal is signed in to has a confirmed catalog document, so only that
+  // one is decremented — see applyCatalog().
+  if(CATALOG_OK&&stock[IDENT.shopId]){
+    const items={};
+    Object.entries(stock[IDENT.shopId]).forEach(([sku,qy])=>{ items[sku]={stock:inc(-r3(qy))}; });
+    if(Object.keys(items).length) batch.set(FS.collection('shop_catalog').doc(catalogId()),{items:items},{merge:true});
+  }
   batch.commit()
     .then(()=>{
       const ids=new Set(chunk.map(b=>b.id));
@@ -1101,6 +1212,88 @@ function updateSyncPill(){
 }
 addEventListener('online',()=>{ setTimeout(syncNow,600); });
 setInterval(syncNow,30000);              // catch anything a failure left behind
+
+/* ══════════════ PER-SHOP CATALOG ══════════════════════════════════════
+   Four vegetable shops in four towns do NOT sell the same list at the same
+   price. Thuckalay's onion is not Monday Market's onion, and ten of the
+   sixty lines differ outright. So price, cost, GST and the product list all
+   live per shop, in ONE document:
+
+       shop_catalog/{businessId}__{shopId}
+         settings : { gstOn, gstRate, vpa }
+         items    : { VEG01: {price, cost, stock, unit, nameEn, nameTa,
+                              category, active}, ... }
+
+   ONE document, not sixty, and read with a listener. The morning price
+   change in the back office reaches every terminal in that shop within a
+   second and costs one read per terminal — about 20 reads a day across the
+   whole business. Sixty separate product documents with a collection
+   listener would have cost 60 reads per terminal per change instead.
+
+   Stock is deliberately NOT listened to per sale. Three terminals watching
+   a live stock count would re-read the document on every bill — roughly
+   54,000 reads a day across six shops for a number nobody looks at
+   mid-sale. Instead each terminal WRITES its decrement as an increment
+   (conflict-free between counters) and reads the settled figure back on the
+   next snapshot. */
+const CAT_KEY=LS+'_catalog';
+let CAT_UNSUB=null, CATALOG_OK=false;
+const catalogId=()=>IDENT?IDENT.businessId+'__'+IDENT.shopId:'';
+/* Firestore map keys may not contain . $ [ ] # / — SKUs never do, but a
+   hand-typed one might, and a rejected write would silently strand bills. */
+const catKey=s=>String(s||'').replace(/[.$\[\]#/]/g,'_').slice(0,60);
+
+/* Quantities sitting in the local queue have already been taken off the
+   shelf but not yet off the server's count. Subtracting them keeps the
+   displayed stock honest while the till is offline. */
+function pendingQty(){
+  const m={};
+  getQueue().forEach(b=>(b.items||[]).forEach(i=>{ if(i.sku) m[i.sku]=(m[i.sku]||0)+(+i.qty||0); }));
+  return m;
+}
+/* `live` = this came from the server just now. Only then may the terminal
+   write stock increments: writing them against a document that does not
+   exist would create a half-formed catalog counting down from zero. */
+function applyCatalog(cat,live){
+  if(!cat||!cat.items) return;
+  if(live){ CATALOG_OK=true; try{ localStorage.setItem(CAT_KEY,JSON.stringify(cat)); }catch(e){} }
+  const pend=pendingQty();
+  const bySku={}; DB.products.forEach(p=>{ bySku[p.sku]=p; });
+  Object.entries(cat.items).forEach(([sku,it])=>{
+    const p=bySku[sku]||{id:'p_'+sku,sku:sku,barcode:''};
+    p.nameEn=it.nameEn||p.nameEn||sku;
+    p.nameTa=it.nameTa||p.nameTa||'';
+    p.category=it.category||p.category||'Other';
+    p.unit=it.unit||p.unit||'kg';
+    p.price=+it.price||0; p.cost=+it.cost||0;
+    p.stock=+(( +it.stock||0)-(pend[sku]||0)).toFixed(3);
+    p.active=it.active!==false;
+    if(!bySku[sku]){ DB.products.push(p); bySku[sku]=p; }
+  });
+  // A shop's catalog IS its product list. Anything not in it is not sold
+  // here — hidden rather than deleted, so a bad edit is recoverable.
+  DB.products.forEach(p=>{ if(!(p.sku in cat.items)) p.active=false; });
+  const s=cat.settings||{};
+  if('gstOn' in s)   DB.settings.gstOn=!!s.gstOn;
+  if('gstRate' in s) DB.settings.gstRate=+s.gstRate||0;
+  if(s.vpa)          DB.settings.vpa=s.vpa;
+  DB.settings.catalogManaged=true;
+  saveDB();
+  if(!document.getElementById('app').classList.contains('hidden')) renderAll();
+}
+function watchCatalog(){
+  if(CAT_UNSUB){ CAT_UNSUB(); CAT_UNSUB=null; }
+  CATALOG_OK=false;
+  if(DEMO||!FB_OK||!IDENT) return;
+  // Last known catalog first, so a terminal that boots offline still bills
+  // at yesterday's correct prices instead of the seed list.
+  try{ const c=JSON.parse(localStorage.getItem(CAT_KEY)||'null');
+       if(c&&c.shopId===IDENT.shopId&&c.businessId===IDENT.businessId) applyCatalog(c,false); }catch(e){}
+  CAT_UNSUB=FS.collection('shop_catalog').doc(catalogId()).onSnapshot(
+    d=>{ if(d.exists) applyCatalog(d.data(),true); else CATALOG_OK=false; },
+    e=>{ console.warn('catalog listener stopped:',e&&e.message); }
+  );
+}
 function startApp(){
   document.getElementById('otp-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
@@ -1151,7 +1344,7 @@ function renderMode(){
 
 /* ══════════════ PRODUCTS ══════════════ */
 function renderCats(){
-  const cats=[...new Set(DB.products.map(p=>p.category))].sort();
+  const cats=[...new Set(onSale().map(p=>p.category))].sort();
   document.getElementById('cat-chips').innerHTML=
     [['','All']].concat(cats.map(c=>[c,c])).map(([v,l])=>
       `<button class="cat ${catFilter===v?'on':''}" onclick="catFilter='${v}';renderProducts();renderCats()">${esc(l)}</button>`).join('');
@@ -1164,10 +1357,21 @@ function matches(p,q){
 }
 function renderProducts(){
   const q=document.getElementById('search-input').value;
-  const list=DB.products.filter(p=>matches(p,q)&&(!catFilter||p.category===catFilter));
+  const list=onSale().filter(p=>matches(p,q)&&(!catFilter||p.category===catFilter));
   const grid=document.getElementById('product-grid');
   if(!list.length){
-    grid.innerHTML=`<div class="grid-empty">No item matches “${esc(q)}”.<br>
+    // An empty grid with no explanation looks like a broken till. Say which
+    // of the three reasons it is: no search hit, no catalogue for this shop,
+    // or a category filter that happens to match nothing.
+    const nothingAtAll=!onSale().length;
+    grid.innerHTML=`<div class="grid-empty">${
+      nothingAtAll
+        ? (DB.settings.catalogManaged&&!DEMO
+            ? '<b>'+esc((IDENT&&IDENT.shopName)||'This shop')+' has no price list yet.</b><br>'
+              +'Set it up in the back office — until then you can still bill by typing items in by hand.'
+            : 'No products on this terminal yet.')
+        : (q?'No item matches “'+esc(q)+'”.':'Nothing in this category.')
+      }<br>
       <button class="btn btn-p" style="margin-top:12px" onclick="openCustomItem()">+ Add it as a custom item</button></div>`;
     return;
   }
@@ -1187,7 +1391,7 @@ function clearSearch(){ const s=document.getElementById('search-input'); s.value
 function skuEnter(){
   const el=document.getElementById('sku-input'), v=el.value.trim().toLowerCase();
   if(!v) return;
-  const p=DB.products.find(x=>x.sku.toLowerCase()===v||(x.barcode||'')===v);
+  const p=onSale().find(x=>x.sku.toLowerCase()===v||(x.barcode||'')===v);
   if(p){ addToCart(p.id); el.value=''; } else { toast('No item with SKU / barcode '+v,'error'); el.select(); }
 }
 
@@ -1234,7 +1438,9 @@ function qtyAdd(){
   // Same product at the same effective rate merges instead of stacking lines
   const ex=c.items.find(i=>i.pid===p.id&&i.rate===net);
   if(ex) ex.qty=+(ex.qty+qty).toFixed(3);
-  else c.items.push({pid:p.id,name:p.nameEn,nameTa:p.nameTa,unit:p.unit,rate:net,qty});
+  // sku + cat travel with the line so the rollup can break the day down by
+  // product and by category without ever re-reading a bill.
+  else c.items.push({pid:p.id,sku:p.sku,cat:p.category,name:p.nameEn,nameTa:p.nameTa,unit:p.unit,rate:net,qty});
   saveCarts(); closeModals(); renderAll();
   toast(p.nameEn+' · '+qtyFmt(qty,p.unit)+' '+p.unit+' = '+money(net*qty));
   // Refocusing search is right on a keyboard terminal and wrong on a phone,
@@ -1249,7 +1455,7 @@ function addCustomItem(){
   if(!name)     return toast('Enter an item name','error');
   if(!(rate>0)) return toast('Enter a rate','error');
   if(!(qty>0))  return toast('Enter a quantity','error');
-  cart().items.push({pid:null,name,nameTa:'',unit,rate,qty,custom:true});
+  cart().items.push({pid:null,sku:'',cat:'Custom',name,nameTa:'',unit,rate,qty,custom:true});
   saveCarts(); closeModals(); renderAll(); toast('Added '+name);
 }
 function setQty(i,v){
@@ -1423,7 +1629,7 @@ function completeSale(){
     ts:Date.now(), date:new Date().toISOString().slice(0,10),
     cashier:DB.session.cashier, mode:c.mode,
     customer:document.getElementById('pay-cust').value.trim(),
-    items:c.items.map(i=>({name:i.name,nameTa:i.nameTa,unit:i.unit,rate:i.rate,qty:i.qty})),
+    items:c.items.map(i=>({sku:i.sku||'',cat:i.cat||'Other',name:i.name,nameTa:i.nameTa,unit:i.unit,rate:i.rate,qty:i.qty})),
     subtotal:+t.sub.toFixed(2), discount:+t.disc.toFixed(2), discType:t.dt, discVal:t.dv,
     gst:+t.gst.toFixed(2), gstRate:DB.settings.gstOn?DB.settings.gstRate:0,
     total:+t.total.toFixed(2), payment:pay
@@ -1518,7 +1724,7 @@ function erpDash(){
   const tb=todayBills();
   const sales=tb.reduce((a,b)=>a+b.total,0);
   const cash=tb.reduce((a,b)=>a+(b.payment.method==='cash'?b.total:b.payment.method==='split'?(b.payment.cash||0):0),0);
-  const inward=DB.products.reduce((a,p)=>a+p.cost*p.stock,0);
+  const inward=onSale().reduce((a,p)=>a+p.cost*p.stock,0);
   document.getElementById('erp-body').innerHTML=
     H('Dashboard',new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'}))
     +erpBackOffice()
@@ -1526,10 +1732,10 @@ function erpDash(){
       ${kpi("Today's sales",fmt(sales),tb.length+' bills')}
       ${kpi('Total bills',tb.length,'avg '+fmt(tb.length?sales/tb.length:0))}
       ${kpi('Cash in drawer',fmt(DB.settings.openingCash+cash-DB.settings.expenses),'incl. opening '+fmt(DB.settings.openingCash))}
-      ${kpi('Stock value',fmt(inward),DB.products.length+' SKUs')}
+      ${kpi('Stock value',fmt(inward),onSale().length+' SKUs')}
     </div>
     <div class="card"><div class="card-hd"><h3>Low stock</h3><span class="note">reorder before tomorrow's run</span></div>
-      ${(()=>{ const low=DB.products.filter(p=>p.stock<=10).sort((a,b)=>a.stock-b.stock);
+      ${(()=>{ const low=onSale().filter(p=>p.stock<=10).sort((a,b)=>a.stock-b.stock);
         return low.length?`<div class="tw"><table class="d"><thead><tr><th>Item</th><th>SKU</th><th class="num">Stock</th></tr></thead><tbody>
           ${low.map(p=>`<tr><td><b>${esc(p.nameEn)}</b><div class="ta" style="font-size:11.5px;color:var(--ink-3)">${esc(p.nameTa)}</div></td>
             <td class="mono" style="font-size:12px">${esc(p.sku)}</td>
@@ -1555,17 +1761,28 @@ function tableBills(list){
 function reprint(id){ const b=DB.bills.find(x=>x.id===id); if(b) showReceipt(b); }
 
 function erpProducts(){
-  document.getElementById('erp-body').innerHTML=H('Products',DB.products.length+' items · tap a row to edit')
+  // When the shop has a catalog, the back office owns prices — editing them
+  // here would be overwritten by the next snapshot without warning, which is
+  // worse than not offering the button at all.
+  const managed=DB.settings.catalogManaged&&!DEMO;
+  document.getElementById('erp-body').innerHTML=H('Products',onSale().length+' items'
+      +(managed?' · prices set in the back office for '+esc((IDENT&&IDENT.shopName)||'this shop'):' · tap a row to edit'))
+    +(managed?`<div class="card" style="background:var(--accent-soft);border-color:var(--accent-line);margin-bottom:13px">
+      <div class="card-b" style="display:flex;align-items:center;gap:13px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2)">
+        <div style="flex:1;min-width:200px">This shop's price list comes from the back office and reaches every counter here
+          within a second of being changed. Edit it there so all terminals agree.</div>
+        <a class="btn" href="pos-admin.html#prod-price" style="text-decoration:none">Open price list</a>
+      </div></div>`:'')
     +`<div style="display:flex;gap:9px;margin-bottom:13px">
       <input class="inp" id="pf" oninput="renderProdTable()" placeholder="Filter products…" style="max-width:280px">
-      <button class="btn btn-p" style="margin-left:auto" onclick="openProduct()"><i data-i="plus"></i>Add</button>
+      ${managed?'':'<button class="btn btn-p" style="margin-left:auto" onclick="openProduct()"><i data-i="plus"></i>Add</button>'}
     </div><div id="prod-table"></div>`;
   renderProdTable();
   icons(document.getElementById('erp-body'));
 }
 function renderProdTable(){
   const q=(document.getElementById('pf')?.value||'').toLowerCase();
-  const list=DB.products.filter(p=>matches(p,q));
+  const list=onSale().filter(p=>matches(p,q));
   document.getElementById('prod-table').innerHTML=`<div class="card" style="margin:0"><div class="tw"><table class="d">
     <thead><tr><th>Item</th><th>SKU</th><th>Category</th><th>Unit</th><th class="num">Cost</th><th class="num">Selling</th><th class="num">Margin</th><th class="num">Stock</th></tr></thead>
     <tbody>${list.length?list.map(p=>{ const m=p.price?((p.price-p.cost)/p.price*100):0;
@@ -1592,7 +1809,7 @@ function openProduct(id){
   document.getElementById('pm-stock').value=p?p.stock:0;
   document.getElementById('pm-cost').value=p?p.cost:'';
   document.getElementById('pm-price').value=p?p.price:'';
-  document.getElementById('cat-list').innerHTML=[...new Set(DB.products.map(x=>x.category))].map(c=>`<option value="${esc(c)}">`).join('');
+  document.getElementById('cat-list').innerHTML=[...new Set(onSale().map(x=>x.category))].map(c=>`<option value="${esc(c)}">`).join('');
   show('m-product');
 }
 function saveProduct(){
@@ -1677,12 +1894,20 @@ function erpSettings(){
   document.getElementById('erp-body').innerHTML=H('Settings','Terminal '+termId()+' · bills numbered '+termId()+'-00001 upward'
       +(DEMO?' · DEMO — nothing syncs':IDENT?' · '+esc(IDENT.shopName):''))
     +`<div class="card" style="max-width:440px"><div class="card-b">
-      <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;margin-bottom:15px">
-        <span><b style="font-size:13.5px">Charge GST</b><div style="font-size:12px;color:var(--ink-3)">Adds tax to every bill</div></span>
-        <input type="checkbox" ${s.gstOn?'checked':''} style="width:18px;height:18px;accent-color:var(--accent)"
+      ${(()=>{
+        // GST is per shop, not per business: vegetables are 0%, the bridal
+        // shop is 3-5%, tea is 5%. It therefore belongs to the shop catalog,
+        // and a cashier must not be able to drift one counter away from the
+        // other two in the same shop.
+        const managed=DB.settings.catalogManaged&&!DEMO;
+        return `<label style="display:flex;align-items:center;justify-content:space-between;gap:12px;${managed?'':'cursor:pointer;'}margin-bottom:15px">
+        <span><b style="font-size:13.5px">Charge GST</b><div style="font-size:12px;color:var(--ink-3)">${managed?'Set for this shop in the back office':'Adds tax to every bill'}</div></span>
+        <input type="checkbox" ${s.gstOn?'checked':''} ${managed?'disabled':''} style="width:18px;height:18px;accent-color:var(--accent)"
           onchange="DB.settings.gstOn=this.checked;saveDB();renderERP();renderCart()"></label>
       <div class="fg"><label class="lbl">GST rate %</label>
-        <input class="inp right-in" type="number" value="${s.gstRate}" onchange="DB.settings.gstRate=parseFloat(this.value)||0;saveDB();renderCart()"></div>
+        <input class="inp right-in" type="number" value="${s.gstRate}" ${managed?'disabled':''}
+          onchange="DB.settings.gstRate=parseFloat(this.value)||0;saveDB();renderCart()"></div>`;
+      })()}
       <div class="fg"><label class="lbl">UPI VPA</label>
         <input class="inp mono" value="${esc(s.vpa)}" onchange="DB.settings.vpa=this.value.trim();saveDB()"></div>
       <div style="display:flex;gap:9px;padding-top:13px;border-top:1px solid var(--line)">
@@ -1851,10 +2076,22 @@ setInterval(()=>{ document.getElementById('clock').textContent=new Date().toLoca
 loadDB(); loadCarts(); netStatus(); icons();
 document.getElementById('clock').textContent=new Date().toLocaleTimeString('en-IN',{hour12:false});
 loadIdent();
+/* A saved session belongs to the address it was created on. If the DNS was
+   re-pointed, or the bookmark copied to another shop's counter, the shop in
+   the URL and the shop in the session no longer agree — and silently billing
+   Monday Market's sales into Thuckalay's books is the one failure that would
+   not be noticed for weeks. Sign out and make someone choose. */
+if(IDENT&&!DEMO&&SHOP_SLUG&&(IDENT.shopSlug||'')!==SHOP_SLUG&&IDENT.businessId!=='demo'){
+  const stranded=getQueue().length;
+  DB.session=null; saveDB();
+  IDENT=null; try{ localStorage.removeItem(ID_KEY); }catch(e){}
+  setTimeout(()=>toast('This address is now '+SHOP_SLUG+' — sign in again to confirm the shop'
+    +(stranded?'. '+stranded+' unsynced bill(s) are still queued on this device.':''),'error'),400);
+}
 if(DB.session&&IDENT){
   DEMO = IDENT.businessId==='demo';
   startApp();
-  if(!DEMO) syncNow();
+  if(!DEMO){ watchCatalog(); syncNow(); }
 } else {
   document.getElementById('li-email').focus();
 }

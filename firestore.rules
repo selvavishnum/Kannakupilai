@@ -213,6 +213,31 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // One catalog document per shop: shop_catalog/{businessId}__{shopId}.
+    // Four vegetable shops in four towns do not share a price list, so price,
+    // cost, stock, the product list itself and the shop's GST setting are all
+    // per shop. Every till in that shop keeps a listener on this one document,
+    // so a morning price change costs one read per terminal instead of one
+    // read per product per terminal.
+    //
+    // Tills WRITE to it too — stock decrements arrive as FieldValue.increment
+    // so two counters selling the same onion at the same second both land —
+    // which is why update is open to the business rather than admin-only.
+    match /shop_catalog/{docId} {
+      allow read:   if isAdmin() || ownsBusiness(resource.data.businessId);
+      allow create: if isAdmin() || (ownsBusiness(request.resource.data.businessId)
+                       && request.resource.data.businessId is string
+                       && request.resource.data.shopId is string);
+      // businessId is what grants access to this document, so an update may
+      // never change it — otherwise a business could rewrite the field and
+      // hand its own catalog to someone else. request.resource.data is the
+      // POST-merge document, so this holds for the till's merge writes (which
+      // send only `items`) as well as for a full rewrite from the back office.
+      allow update: if isAdmin() || (ownsBusiness(resource.data.businessId)
+                       && request.resource.data.businessId == resource.data.businessId);
+      allow delete: if isAdmin() || ownsBusiness(resource.data.businessId);
+    }
+
     // Promo codes — you (admin) create/delete them; any signed-in user may read
     // a code to validate it and, when redeeming, update ONLY the usage fields
     // (usedCount / usedBy). This stops casual tampering with planType/maxUses/
