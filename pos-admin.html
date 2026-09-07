@@ -502,11 +502,28 @@ function seedBills(){
 }
 
 /* ═════════ storage ═════════ */
+/* An empty book with the right shape. Same collections as seedDB(), no
+   records — this is what a real, signed-in shop starts from. */
+function emptyDB(){
+  const d=seedDB();
+  Object.keys(d).forEach(k=>{ if(Array.isArray(d[k])) d[k]=[]; });
+  d.settings=Object.assign({},d.settings,{expenses:0,store:'',gstin:'',address:''});
+  d._demo=false;
+  return d;
+}
+/* ⚠️ SEED DATA IS DEMO DATA AND NEVER SHOWS ON A REAL ACCOUNT.
+   This used to seed unconditionally, so a shop that had just signed in was
+   shown six invented employees with salaries, customers with outstanding
+   dues, and — through synthRollup() — ninety days of fabricated sales on
+   the Dashboard. Numbers a shop owner might act on must never be invented.
+   Seeding now happens only in startAdminDemo(); a real sign-in wipes any
+   demo book left behind (see clearDemoData). */
 function load(){
   try{ DB=JSON.parse(localStorage.getItem(LS)||'null'); }catch(e){ DB=null; }
-  if(!DB||!DB.products||!DB.staff||!DB.orders) DB=Object.assign(seedDB(),DB||{});
-  // Any collection a newer build introduces is backfilled rather than left undefined
-  const fresh=seedDB();
+  if(!DB||!DB.products||!DB.staff||!DB.orders) DB=Object.assign(emptyDB(),DB||{});
+  // Any collection a newer build introduces is backfilled rather than left
+  // undefined — with an EMPTY list, not with sample rows.
+  const fresh=emptyDB();
   Object.keys(fresh).forEach(k=>{ if(DB[k]===undefined) DB[k]=fresh[k]; });
   save(); loadRollups();
 }
@@ -519,8 +536,14 @@ function loadRollups(){
   const byDate={};
   DB.bills.forEach(b=>{ (byDate[b.date]=byDate[b.date]||[]).push(b); });
   Object.entries(byDate).forEach(([d,l])=>{ ROLL[d]=rollupFrom(d,l); });
-  for(let i=0;i<90;i++){ const dt=new Date(); dt.setDate(dt.getDate()-i); const d=iso(dt);
-    if(!ROLL[d]) ROLL[d]=synthRollup(d,dt); }
+  // Only the demo book invents a day it has no bills for. On a real account
+  // a day with no sales is a day with no sales.
+  if(DB._demo){
+    for(let i=0;i<90;i++){ const dt=new Date(); dt.setDate(dt.getDate()-i); const d=iso(dt);
+      if(!ROLL[d]) ROLL[d]=synthRollup(d,dt); }
+  }else{
+    Object.keys(ROLL).forEach(d=>{ if(ROLL[d]&&ROLL[d].synth) delete ROLL[d]; });
+  }
   saveRollups();
 }
 function rollupFrom(date,list){
@@ -592,7 +615,6 @@ const SCHEMA={
   'prod-cat':      {t:'Product Category', c:'categories', f:[T('name','Category',{req:1}),T('parent','Parent'),N('items','Items')]},
   'prod-indent':   {t:'Purchase INDENT',  c:'indents',    f:[T('indent','Indent No',{req:1}),D('date','Date'),T('product','Product'),N('qty','Qty'),T('unit','Unit'),T('raisedBy','Raised by'),S('status','Status',['Open','Converted','Cancelled'])]},
   'prod-inward':   {t:'Purchase INWARD',  c:'inward',     f:[T('grn','GRN No',{req:1}),D('date','Date'),T('po','Against PO'),T('product','Product'),N('ordered','Ordered'),N('received','Received'),N('shortfall','Shortfall'),T('warehouse','Warehouse')]},
-  'prod-inv':      {t:'Product Inventory',c:'products',   f:[T('nameEn','Name',{req:1}),T('nameTa','தமிழ்'),T('sku','SKU'),T('category','Category'),T('brand','Brand'),S('unit','Unit',['kg','pcs']),M('cost','Cost'),M('price','Selling',{req:1}),N('stock','Stock'),T('warehouse','Warehouse'),T('barcode','Barcode')]},
   'prod-brands':   {t:'Brands',           c:'brands',     f:[T('name','Brand',{req:1}),T('supplier','Supplier'),N('items','Items')]},
   'prod-dtypes':   {t:'DataTypes',        c:'datatypes',  f:[T('name','Name',{req:1}),S('kind','Kind',['integer','decimal','text']),T('unit','Unit'),T('note','Note')]},
   /* ── Suppliers / warehouses ── */
@@ -651,7 +673,7 @@ const NAV=[
  {g:'sup',l:'Suppliers',ic:'truck',kids:[['suppliers','Supplier DB'],['prod-po','Purchase Orders (PO)'],['raw-mat','Raw Materials'],['raw-po','RawMaterial PO']]},
  {g:'ord',l:'Orders',ic:'clipboard-list',kids:[['ord-dash','Dashboard'],['ord-New','1. New Orders'],['ord-Prepare','2. Prepare'],['ord-Package','3. Package'],['ord-Ship','4. Ship'],['ord-Delivery','5. Delivery'],['ord-Payment','6. Payment'],['ord-Closed','7. Closed'],['ord-History','8. History'],['ord-Returns','9. Returns']]},
  {g:'sal',l:'Sales',ic:'shopping-cart',kids:[['sales-so','Sale Orders (SO)'],['sales-pos','Billing POS — OUTWARD']]},
- {g:'prd',l:'Products',ic:'package',kids:[['prod-price',"Price list — this shop"],['prod-grid','Prices — all shops'],['prod-cat','Product Category'],['prod-indent','Purchase INDENT'],['prod-inward','Purchase INWARD'],['prod-inv','Product Inventory'],['prod-stock','In-Stock Checker'],['prod-brands','Brands'],['prod-dtypes','DataTypes'],['prod-barcode','BarCode Creator']]},
+ {g:'prd',l:'Products',ic:'package',kids:[['prod-inv','Product Inventory'],['prod-grid','Prices — all shops'],['prod-cat','Product Category'],['prod-indent','Purchase INDENT'],['prod-inward','Purchase INWARD'],['prod-stock','In-Stock Checker'],['prod-brands','Brands'],['prod-dtypes','DataTypes'],['prod-barcode','BarCode Creator']]},
  {g:'crm',l:'Customers (CRM)',ic:'contact',kids:[['crm-db','Customer DB'],['crm-coupons','Coupons'],['crm-feedback','Feedbacks & Ratings'],['crm-complaints','Complaints & Issues']]},
  {g:'hrm',l:'Employees (HRM)',ic:'users',kids:[['hr-dept','Departments'],['hr-db','Employee DB'],['hr-timesheet','Employee Timesheet'],['hr-leave','Employee Leave'],['hr-actions','Employee Actions'],['hr-requests','Employee Requests'],['hr-perf','Employee Performance'],['hr-onboard','Employee Onboarding'],['hr-exit','Employee Exit/Resign'],['hr-holidays','Holidays Calender']]},
  {g:'pjt',l:'Projects',ic:'git-branch',kids:[['pj-list','Projects'],['pj-items','Project WorkItems'],['pj-backlog','Project Backlogs'],['pj-risks','Project Risks']]},
@@ -936,7 +958,7 @@ function repSalesByProduct(rows){
   const tq=a.reduce((s,x)=>s+x.qty,0), ta=a.reduce((s,x)=>s+x.amt,0);
   return {cols:['SKU','Product','தமிழ்','Qty','Value','% of sales'],num:[3,4,5],
     note:'from '+rows.length+' daily rollups',
-    rows:a.map(x=>{const p=DB.products.find(p=>p.sku===x.sku);
+    rows:a.map(x=>{const p=productList().find(p=>p.sku===x.sku);
       return ['<span class="mono" style="font-size:12px">'+esc(x.sku)+'</span>','<b>'+esc(x.name)+'</b>',
         '<span class="ta" style="color:var(--ink-2)">'+esc(p?p.nameTa:'—')+'</span>',
         x.qty.toFixed(2),money(x.amt),(ta?x.amt/ta*100:0).toFixed(1)+'%'];}),
@@ -944,7 +966,7 @@ function repSalesByProduct(rows){
 }
 function repSalesByCategory(rows){
   const a=aggItems(rows), by={};
-  a.forEach(x=>{const p=DB.products.find(p=>p.sku===x.sku);const c=p?p.category:'Uncategorised';
+  a.forEach(x=>{const p=productList().find(p=>p.sku===x.sku);const c=p?p.category:'Uncategorised';
     const e=by[c]=by[c]||{qty:0,amt:0,n:0}; e.qty+=x.qty; e.amt+=x.amt; e.n++;});
   const list=Object.entries(by).sort((x,y)=>y[1].amt-x[1].amt);
   const ta=list.reduce((s,[,v])=>s+v.amt,0);
@@ -1076,7 +1098,7 @@ function repLedgerSummary(){
 function repPriceList(){
   return {cols:['SKU','Product','தமிழ்','Unit','Cost','Selling','Margin','Stock'],num:[4,5,6,7],
     note:'current price master',
-    rows:DB.products.map(p=>{const m=p.price?((p.price-p.cost)/p.price*100):0;
+    rows:productList().map(p=>{const m=p.price?((p.price-p.cost)/p.price*100):0;
       return ['<span class="mono" style="font-size:12px">'+esc(p.sku)+'</span>','<b>'+esc(p.nameEn)+'</b>',
         '<span class="ta" style="color:var(--ink-2)">'+esc(p.nameTa)+'</span>',p.unit,money2(p.cost),money2(p.price),
         '<span class="pill '+(m<15?'bad':'ok')+'">'+m.toFixed(0)+'%</span>',p.stock];})};
@@ -1088,7 +1110,7 @@ function repPriceList(){
 function pgDashboard(){
   const r30=rollupRange(30), today=ROLL[iso(new Date())]||{bills:0,sales:0,cash:0,upi:0,card:0,items:{}};
   const sales30=r30.reduce((a,r)=>a+r.sales,0), bills30=r30.reduce((a,r)=>a+r.bills,0);
-  const stockVal=DB.products.reduce((a,p)=>a+p.cost*p.stock,0);
+  const stockVal=productList().reduce((a,p)=>a+p.cost*p.stock,0);
   const drawer=DB.settings.openingCash+today.cash-DB.settings.expenses;
   sub('Last 30 days · '+r30.length+' rollup documents read');
   const mix=[{k:'Cash',v:r30.reduce((a,r)=>a+r.cash,0),c:'var(--series-1)'},
@@ -1119,7 +1141,7 @@ function pgDashboard(){
     </div>`);
 }
 function lowStock(){
-  const low=DB.products.filter(p=>p.stock<=25).sort((a,b)=>a.stock-b.stock).slice(0,7);
+  const low=productList().filter(p=>p.stock<=25).sort((a,b)=>a.stock-b.stock).slice(0,7);
   if(!low.length) return '<div class="empty">Everything is above the reorder line.</div>';
   return `<div class="tw"><table><thead><tr><th>Item</th><th>SKU</th><th class="num">Stock</th></tr></thead>
     <tbody>${low.map(p=>`<tr><td><b>${esc(p.nameEn)}</b><div class="ta" style="font-size:11.5px;color:var(--ink-3)">${esc(p.nameTa)}</div></td>
@@ -1144,7 +1166,7 @@ function attention(){
 function pgWarehouses(){
   sub(DB.warehouses.length+' locations');
   V(`<div class="grid g3" style="margin-bottom:13px">${DB.warehouses.map(w=>{
-      const items=DB.products.filter(p=>p.warehouse===w.name);
+      const items=productList().filter(p=>p.warehouse===w.name);
       const val=items.reduce((a,p)=>a+p.cost*p.stock,0);
       return `<div class="card"><div class="card-b">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:7px">
@@ -1158,10 +1180,10 @@ function pgWarehouses(){
     <div class="toolbar"><button class="btn btn-p" style="margin-left:auto" onclick="go('warehouses');crudForm('warehouses')"><i data-i="plus"></i>Add warehouse</button></div>
     <div class="card"><div class="card-hd"><h3>Stock by location</h3></div><div class="tw"><table>
       <thead><tr><th>Item</th><th>SKU</th><th>Warehouse</th><th class="num">Stock</th><th class="num">Value</th></tr></thead>
-      <tbody>${DB.products.map(p=>`<tr><td><b>${esc(p.nameEn)}</b></td><td class="mono" style="font-size:12px">${esc(p.sku)}</td>
+      <tbody>${productList().map(p=>`<tr><td><b>${esc(p.nameEn)}</b></td><td class="mono" style="font-size:12px">${esc(p.sku)}</td>
         <td><span class="pill">${esc(p.warehouse||'Main Counter')}</span></td>
         <td class="num tnum">${p.stock} ${p.unit}</td><td class="num tnum">${money(p.cost*p.stock)}</td></tr>`).join('')}</tbody>
-      <tfoot><tr><td colspan="4"><b>Total</b></td><td class="num tnum">${money(DB.products.reduce((a,p)=>a+p.cost*p.stock,0))}</td></tr></tfoot>
+      <tfoot><tr><td colspan="4"><b>Total</b></td><td class="num tnum">${money(productList().reduce((a,p)=>a+p.cost*p.stock,0))}</td></tr></tfoot>
     </table></div></div>`);
 }
 
@@ -1176,7 +1198,7 @@ function pgStockCheck(){
 }
 function drawStock(){
   const q=(document.getElementById('sc-q')?.value||'').toLowerCase().trim();
-  const list=!q?[]:DB.products.filter(p=>p.nameEn.toLowerCase().includes(q)||p.nameTa.includes(q)||p.sku.toLowerCase().includes(q)||(p.barcode||'').includes(q));
+  const list=!q?[]:productList().filter(p=>p.nameEn.toLowerCase().includes(q)||p.nameTa.includes(q)||p.sku.toLowerCase().includes(q)||(p.barcode||'').includes(q));
   document.getElementById('sc-out').innerHTML=!q
     ? '<div class="card"><div class="empty">Start typing to check stock.</div></div>'
     : (!list.length ? '<div class="card"><div class="empty">Nothing matches “'+esc(q)+'”.</div></div>'
@@ -1203,7 +1225,7 @@ function pgBarcode(){
   V(`<div class="card" style="max-width:640px;margin-bottom:13px"><div class="card-b">
       <div class="frow">
         <div class="fg"><label class="fl">Item</label>
-          <select class="inp" id="bc-p" onchange="drawBarcode()">${DB.products.map(p=>`<option value="${esc(p.id)}">${esc(p.nameEn)} · ${esc(p.sku)}</option>`).join('')}</select></div>
+          <select class="inp" id="bc-p" onchange="drawBarcode()">${productList().map(p=>`<option value="${esc(p.id)}">${esc(p.nameEn)} · ${esc(p.sku)}</option>`).join('')}</select></div>
         <div class="fg"><label class="fl">Copies</label><input class="inp tnum" id="bc-n" type="number" value="6" min="1" max="40" onchange="drawBarcode()"></div>
       </div>
       <button class="btn btn-p" onclick="window.print()"><i data-i="barcode"></i>Print labels</button>
@@ -1211,7 +1233,8 @@ function pgBarcode(){
   drawBarcode();
 }
 function drawBarcode(){
-  const p=DB.products.find(x=>x.id===document.getElementById('bc-p').value)||DB.products[0];
+  const list=productList();
+  const p=list.find(x=>x.id===document.getElementById('bc-p').value)||list[0];
   const n=Math.min(Math.max(parseInt(document.getElementById('bc-n').value)||1,1),40);
   const code=(p.barcode||p.sku);
   // Deterministic bar widths derived from the code's own characters
@@ -1378,7 +1401,7 @@ function liveGate(what){
 let priceShop='', priceQ='', priceCat='', priceFull=false;
 
 function pgPriceList(){
-  if(DEMO_ADMIN||!ME) return V(liveGate('The price list'));
+  if(!ME) return V(liveGate('Product Inventory'));
   if(!priceShop||!ME.shops[priceShop]) priceShop=ME.scope||Object.keys(ME.shops)[0];
   sub(ME.locked?'Locked to '+shopName(priceShop)+' by this address':'Prices are per shop — each one is edited on its own');
   V(`<div class="toolbar">
@@ -1394,7 +1417,8 @@ function pgPriceList(){
       <button class="btn" onclick="downloadCatalogCsv()"><i data-i="download"></i>CSV</button>
       <button class="btn" onclick="document.getElementById('csv-file').click()">Upload CSV</button>
       <input type="file" id="csv-file" accept=".csv,text/csv" style="display:none" onchange="uploadCatalogCsv(this)">
-      <button class="btn btn-p" style="margin-left:auto" id="price-save" onclick="savePrices()">Save to all tills</button>
+      ${DEMO_ADMIN?'<span class="pill" style="margin-left:auto">demo — edits stay in this tab</span>'
+        :'<button class="btn btn-p" style="margin-left:auto" id="price-save" onclick="savePrices()">Save to all tills</button>'}
     </div>
     <p style="font-size:12px;color:var(--ink-3);margin:0 0 13px;line-height:1.5">
       Stock is what the tills have counted down to — edit it only when you physically recount.
@@ -1403,6 +1427,18 @@ function pgPriceList(){
     <div id="price-body"></div>`);
   drawPrices();
   icons(document.getElementById('view'));
+}
+/* ONE source of products. The demo book has its own sample rows; a real
+   account reads the shop catalog, so the stock checker, barcode screen and
+   warehouse view all show exactly what the till shows. There is no second
+   product list to drift out of step with the first. */
+function productList(){
+  if(DEMO_ADMIN||!ME) return DB.products||[];
+  const sid=priceShop||ME.scope||Object.keys(ME.shops)[0];
+  const items=(CATS[sid]&&CATS[sid].items)||{};
+  return Object.keys(items).sort().map(sku=>Object.assign(
+    {id:'p_'+sku,sku,nameEn:sku,nameTa:'',category:'',unit:'kg',cost:0,price:0,stock:0,
+     barcode:'',warehouse:'Main Counter',brand:''},items[sku]));
 }
 function catRows(sid){
   const items=(CATS[sid]&&CATS[sid].items)||{};
@@ -1441,9 +1477,44 @@ function drawPrices(){
   const txt=(sku,f,val,w,ph)=>`<td><input class="inp" style="height:34px;min-width:${w}px" placeholder="${ph||''}"
       value="${esc(val||'')}" onchange="setCat('${esc(sku)}','${f}',this.value)"></td>`;
 
+  const head=`<div class="card-hd"><h3>${rows.length} of ${all.length} item${all.length===1?'':'s'}</h3>
+      <span style="font-size:12px;color:var(--ink-3)">${esc(shopName(priceShop))}</span></div>`;
+
+  /* On a phone a wide table puts the selling price two horizontal scrolls
+     past the name — and the price is the entire reason this screen exists.
+     Narrow screens get a card per item instead, price first. */
+  if(window.innerWidth<760){
+    el.innerHTML=`<div class="card">${head}<div>${rows.map(r=>`
+      <div style="padding:13px 15px;border-top:1px solid var(--line)">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:9px">
+          <b style="font-size:14px;flex:1;min-width:0">${esc(r.nameEn||r.sku)}</b>
+          <span class="tnum" style="font-size:11px;color:var(--ink-3)">${esc(r.sku)}</span>
+        </div>
+        ${r.nameTa?`<div style="font-size:12.5px;color:var(--ink-2);margin:-5px 0 9px">${esc(r.nameTa)}</div>`:''}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:9px">
+          <label style="font-size:11px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em">Selling price
+            <input class="inp tnum" type="number" step="0.01" style="height:42px;font-size:16px;font-weight:700;text-align:right;margin-top:3px"
+              value="${+r.price||0}" onchange="setCat('${esc(r.sku)}','price',parseFloat(this.value)||0)"></label>
+          <label style="font-size:11px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em">Stock (${esc(r.unit||'kg')})
+            <input class="inp tnum" type="number" step="0.001" style="height:42px;font-size:16px;text-align:right;margin-top:3px"
+              value="${+r.stock||0}" onchange="setCat('${esc(r.sku)}','stock',parseFloat(this.value)||0)"></label>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3)">
+          <span>${esc(r.category||'—')}</span>
+          <span>cost ${money2(r.cost)}</span>
+          <label style="display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--ink-2)">
+            <input type="checkbox" ${r.active!==false?'checked':''} style="width:18px;height:18px;accent-color:var(--accent)"
+              onchange="setCat('${esc(r.sku)}','active',this.checked)">On sale</label>
+          <button class="btn" style="height:32px;padding:0 10px;color:var(--danger)" onclick="delCatalogItem('${esc(r.sku)}')">Remove</button>
+        </div>
+      </div>`).join('')}</div></div>
+      <p class="hint" style="margin-top:11px;font-size:12px;color:var(--ink-3)">
+        Names, barcodes, HSN and MRP are edited on a wider screen — or uploaded as a CSV.</p>`;
+    return;
+  }
+
   el.innerHTML=`<div class="card">
-    <div class="card-hd"><h3>${rows.length} of ${all.length} item${all.length===1?'':'s'}</h3>
-      <span style="font-size:12px;color:var(--ink-3)">${esc(shopName(priceShop))}</span></div>
+    ${head}
     <div class="tw"><table>
     <thead><tr><th>SKU</th><th>Item</th><th>Category</th>${priceFull?'<th>Barcode</th><th>HSN</th>':''}<th>Unit</th>
       <th class="num">Cost</th>${priceFull?'<th class="num">MRP</th><th class="num">GST%</th>':''}
@@ -1787,7 +1858,12 @@ function exportNightly(){
 const SPECIAL={
   'dashboard':   {t:'Dashboard',              fn:pgDashboard},
   'nightly':     {t:'Nightly check',          fn:pgNightly},
-  'prod-price':  {t:"This shop's price list", fn:pgPriceList},
+  // Product Inventory and the price list are the same list. They used to be
+  // two screens over two different stores, so a shop could edit prices in
+  // one and see stale rows in the other. 'prod-price' stays routable because
+  // the till deep-links to it.
+  'prod-inv':    {t:'Product Inventory',      fn:pgPriceList},
+  'prod-price':  {t:'Product Inventory',      fn:pgPriceList},
   'prod-grid':   {t:'Prices — all shops',     fn:pgPriceGrid},
   'reports':     {t:'Reports',                fn:pgReports},
   'warehouses':  {t:'Warehouses',             fn:pgWarehouses},
@@ -1899,14 +1975,61 @@ function resolveMe(user){
       const bound=matchShopBySlug(me.shops,SHOP_SLUG);
       me.scope=bound||''; me.locked=!!bound;
       ME=me; DEMO_ADMIN=false;
-      return loadCatalogs();
+      const wiped=clearDemoData();
+      if(wiped) setTimeout(()=>toast('Demo data cleared — this is your real shop now'),700);
+      return loadCatalogs().then(loadLiveRollups);
     });
 }
 function startAdminDemo(){
-  DEMO_ADMIN=true; ME=null;
+  DEMO_ADMIN=true;
+  DB=seedDB(); DB._demo=true; save();     // sample rows exist ONLY here
+  ROLL={}; try{ localStorage.removeItem(LS_ROLL); }catch(e){}
+  loadRollups();
+  /* The demo gets a one-shop identity so Product Inventory is explorable
+     rather than a locked door — it runs the SAME code as a real shop, on a
+     catalog built from the sample rows. DEMO_ADMIN still gates everything
+     that would touch Firestore: nothing here is saved or sent. */
+  ME={uid:'demo',businessId:'demo',email:'',name:'Demo manager',role:'owner',
+      shops:{demo:{name:'Demo shop'}},scope:'demo',locked:true};
+  CATS={demo:{businessId:'demo',shopId:'demo',settings:{gstOn:DB.settings.gstOn,gstRate:DB.settings.gstRate},items:{}}};
+  DB.products.forEach(p=>{ CATS.demo.items[p.sku]={nameEn:p.nameEn,nameTa:p.nameTa,category:p.category,
+    unit:p.unit,cost:p.cost,price:p.price,mrp:0,gst:0,stock:p.stock,barcode:p.barcode||'',hsn:'',active:true}; });
+  priceShop='demo'; priceQ=''; priceCat='';
   document.getElementById('lock').style.display='none';
   bootAdmin();
   toast('Demo data — nothing here is your real shop');
+}
+/* A real account must never see a sample row. If the book on this device
+   was the demo one, it is replaced outright rather than merged — a merge
+   would leave six invented employees sitting under the shop's real ones. */
+function clearDemoData(){
+  if(!DB._demo) return false;
+  DB=emptyDB(); save();
+  ROLL={}; try{ localStorage.removeItem(LS_ROLL); }catch(e){}
+  return true;
+}
+/* The Dashboard and the 15 reports read ROLL. On a real account it is
+   filled from pos_rollups — one document per shop per day — so those
+   screens show the shop's own takings instead of nothing at all.
+   Days are merged across shops, because the Dashboard is a whole-business
+   view; the Nightly check is where the per-shop split lives. */
+function loadLiveRollups(){
+  if(DEMO_ADMIN||!ME||!FB_OK) return Promise.resolve();
+  return fetchRollups(90).then(rows=>{
+    ROLL={};
+    rows.forEach(r=>{
+      const d=r.date; if(!d) return;
+      const e=ROLL[d]=ROLL[d]||{date:d,bills:0,sales:0,cash:0,upi:0,card:0,items:{},synth:false};
+      e.bills+=r.bills||0; e.sales+=r.sales||0;
+      e.cash+=r.cash||0; e.upi+=r.upi||0; e.card+=r.card||0;
+      Object.entries(r.items||{}).forEach(([k,v])=>{
+        const i=e.items[k]=e.items[k]||{name:v.name||k,qty:0,amt:0};
+        i.qty+=v.qty||0; i.amt+=v.sales||0; if(v.name) i.name=v.name;
+      });
+    });
+    Object.values(ROLL).forEach(e=>['sales','cash','upi','card'].forEach(k=>e[k]=+e[k].toFixed(2)));
+    saveRollups();
+  }).catch(e=>{ console.warn('could not read rollups:',e&&e.message); });
 }
 function signOutAdmin(){
   if(FB_OK&&AUTH.currentUser) AUTH.signOut().catch(()=>{});
@@ -1936,7 +2059,10 @@ function loadCatalogs(){
    physical recount overwrites what the tills counted.                       */
 const _stockEdited={};                     // shopId -> {sku:true}
 function saveCatalog(sid){
-  if(DEMO_ADMIN||!ME||!FB_OK) return Promise.reject(new Error('Firebase is not reachable from this device'));
+  // Demo edits stay in the tab. Saying so beats a red error the moment
+  // someone tries the button.
+  if(DEMO_ADMIN) return Promise.reject(new Error('demo data — nothing is saved or sent to any till'));
+  if(!ME||!FB_OK) return Promise.reject(new Error('Firebase is not reachable from this device'));
   const ref=FS.collection('shop_catalog').doc(catalogId(sid));
   return ref.get().then(d=>{
     const live=(d.exists&&d.data().items)||{};
@@ -2016,7 +2142,11 @@ if(FB_OK){
   document.getElementById('lock-err').textContent='Firebase did not load — only the demo is available on this device.';
   document.getElementById('lock-err').style.display='block';
 }
-addEventListener('resize',()=>{ if(page==='dashboard'||page==='reports') go(page); });
+addEventListener('resize',()=>{
+  // The price list swaps between a table and cards at 760px, so it has to
+  // redraw on a rotation the same way the charts do.
+  if(page==='dashboard'||page==='reports'||page==='prod-inv'||page==='prod-price') go(page);
+});
 </script>
 </body>
 </html>
