@@ -151,7 +151,11 @@ header.top{height:52px;flex-shrink:0;background:var(--surface);border-bottom:1px
 .ctab.on .n{background:var(--accent)}
 .vr{width:1px;height:22px;background:var(--line)}
 
+/* The cart is what gets CHECKED before money changes hands, so on a wide
+   shop monitor it gets the room it needs to show a full product name. The
+   grid loses one column of seven and nobody notices. */
 .work{flex:1;min-height:0;display:grid;grid-template-columns:1fr 400px}
+@media(min-width:1400px){.work{grid-template-columns:1fr 470px}}
 @media(max-width:1100px){.work{grid-template-columns:1fr 340px}}
 .left{min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line)}
 .searchbar{padding:9px 10px;background:var(--surface);border-bottom:1px solid var(--line);display:flex;gap:8px;flex-shrink:0}
@@ -190,6 +194,63 @@ header.top{height:52px;flex-shrink:0;background:var(--surface);border-bottom:1px
 .cart-hd{padding:10px 13px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;flex-shrink:0}
 .cart-hd b{font-size:13.5px;font-weight:700}
 #cart-body{flex:1;min-height:0;overflow-y:auto}
+.searchbar .field{position:relative}
+/* The suggestion list sits over the grid, so a counter can start typing and
+   commit without ever looking away from the search box. */
+.sugg{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:40;max-height:340px;overflow:auto;
+  background:var(--surface);border:1px solid var(--line);border-radius:11px;
+  box-shadow:0 10px 28px rgba(0,0,0,.14);padding:5px}
+.sugg .s-row{display:flex;align-items:center;gap:11px;padding:10px 11px;border-radius:8px;cursor:pointer}
+.sugg .s-row.on{background:var(--accent-soft)}
+.sugg .s-row:hover{background:var(--line-2)}
+.sugg .s-nm{flex:1;min-width:0;font-size:14px;font-weight:600;line-height:1.3}
+.sugg .s-ta{font-size:12px;color:var(--ink-2);line-height:1.3}
+.sugg .s-sku{font-size:11px;color:var(--ink-3);font-family:'Roboto Mono',monospace}
+.sugg .s-pr{font-size:14px;font-weight:800;white-space:nowrap}
+.sugg .s-un{font-size:10.5px;font-weight:700;color:var(--ink-3);text-transform:uppercase}
+.sugg mark{background:#fde68a;color:inherit;border-radius:2px;padding:0 1px}
+.sugg .s-foot{padding:7px 11px 4px;font-size:11px;color:var(--ink-3);border-top:1px solid var(--line-2);margin-top:4px}
+.sugg .s-none{padding:14px 11px;font-size:13px;color:var(--ink-3)}
+
+/* ── cart rows ──────────────────────────────────────────────────────────
+   Sized to be read at arm's length across a counter, and to fit about
+   fifteen lines on a shop screen without scrolling. Everything that is not
+   the product, the quantity or the amount is smaller than those three. */
+.cart-rows{display:flex;flex-direction:column}
+.crow{display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--line-2)}
+.crow:last-child{border-bottom:0}
+.crow.fresh{background:var(--accent-soft)}          /* the line just added */
+.c-main{flex:1;min-width:0}
+.c-nm{font-size:15px;font-weight:700;line-height:1.2;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.c-nm .tag{font-size:9px;margin-left:5px;vertical-align:1px}
+/* Two lines, not four. The name and the quantity stay large because those
+   are what is being checked; the Tamil name, rate, unit and code share one
+   quieter line under it. This is what makes ~15 lines fit on a shop screen
+   while each line is still readable from across the counter. */
+.c-ta{color:var(--ink-2);font-size:12px}
+.c-meta{display:flex;align-items:center;gap:6px;font-size:11.5px;line-height:1.2;color:var(--ink-3);
+  margin-top:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.c-meta>span{flex-shrink:0}
+.c-meta .c-ta{flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.c-sku{font-family:'Roboto Mono',monospace;font-size:10.5px;
+  background:var(--line-2);border-radius:4px;padding:0 4px}
+.c-qty{display:flex;align-items:center;gap:3px;flex-shrink:0}
+.c-qty button{width:27px;height:32px;border-radius:7px;background:var(--line-2);
+  font-weight:700;color:var(--ink-2);font-size:17px;line-height:1;flex-shrink:0}
+.c-qty button:hover{background:#e6e6e3;color:var(--ink)}
+.c-qty input{width:64px;height:32px;border:1px solid var(--line);border-radius:7px;text-align:center;
+  font-size:16px;font-weight:800;font-family:'Roboto Mono',monospace;background:var(--surface);color:var(--ink)}
+.c-qty input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.c-amt{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.c-amt>div{font-size:16px;font-weight:800;min-width:66px;text-align:right;letter-spacing:-.02em}
+@media(max-width:520px){
+  .crow{padding:10px 12px;gap:8px}
+  .c-nm{font-size:15.5px}
+  .c-qty input{width:66px}
+  .c-amt>div{min-width:66px;font-size:15.5px}
+}
+
 table.cart{width:100%;border-collapse:collapse;font-size:13px}
 table.cart th{position:sticky;top:0;background:var(--raised);border-bottom:1px solid var(--line);
   font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:8px 10px;text-align:left;z-index:1}
@@ -545,8 +606,11 @@ table.d tr.click:hover td{background:var(--raised)}
           </div>
           <div class="field">
             <i data-i="search"></i>
-            <input class="inp" id="search-input" placeholder="Search item / தமிழ் பெயர் / barcode" oninput="renderProducts()">
+            <input class="inp" id="search-input" placeholder="Search item / தமிழ் பெயர் / barcode"
+              autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="sugg"
+              oninput="onSearchInput()" onkeydown="suggKey(event)" onfocus="onSearchInput()">
             <button class="clr" onclick="clearSearch()" aria-label="Clear"><i data-i="x"></i></button>
+            <div id="sugg" class="sugg hidden" role="listbox"></div>
           </div>
           <button class="btn" id="grid-btn" onclick="toggleGrid()" title="Show or hide the product grid"
             style="flex:0 0 auto;height:38px;padding:0 11px"></button>
@@ -911,6 +975,13 @@ function saveCarts(){ try{ localStorage.setItem(LS+'_carts',JSON.stringify(CARTS
 const onSale=()=>DB.products.filter(p=>p.active!==false);
 
 const cart=()=>CARTS[active];
+/* The cart shows newest first. A line whose quantity was just increased is
+   the newest thing that happened to the cart, so it moves to the end of the
+   array — which is the top of the display. */
+function moveToEnd(c,it){
+  const i=c.items.indexOf(it);
+  if(i>=0&&i!==c.items.length-1){ c.items.splice(i,1); c.items.push(it); }
+}
 const money=n=>'₹'+(Math.round((n+Number.EPSILON)*100)/100).toFixed(2);
 const qtyFmt=(q,u)=>u==='kg'?Number(q).toFixed(3):String(Math.round(q));
 const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1049,17 +1120,52 @@ function signInGoogle(){
 
 /* businessId comes from the signed-in user's staff doc — the same resolution
    the ledger app uses, so POS bills land under the same business. */
+/* Same identity resolution as the back office: the profile document if it
+   exists, otherwise an invitation addressed to this email. A counter login
+   is just a staff grant whose role is allowed to bill. */
+const POS_ROLES=['owner','manager','cashier'];
 function resolveIdentity(user){
+  const email=(user.email||'').toLowerCase();
   const fallback={uid:user.uid,businessId:user.uid,email:user.email||'',name:user.displayName||user.email||'User',role:'owner'};
   return FS.collection('staff').doc(user.uid).get()
-    .then(d=>{ const s=d.exists?d.data():{};
-      return {uid:user.uid,businessId:s.businessId||user.uid,email:user.email||'',
-              name:s.name||user.displayName||user.email||'User',role:s.role||'owner'}; })
+    .then(d=>{
+      if(d.exists){ const s=d.data();
+        return {uid:user.uid,businessId:s.businessId||user.uid,email:user.email||'',
+                name:s.name||user.displayName||user.email||'User',role:s.role||'owner',
+                shopId:s.shopId||'',terminal:s.terminal||''}; }
+      if(!email) return fallback;
+      return FS.collection('staff_grants').where('email','==',email).limit(1).get()
+        .then(sn=>{
+          if(sn.empty) return fallback;
+          const g=sn.docs[0].data();
+          const me={uid:user.uid,businessId:g.businessId,email:user.email||'',
+                    name:g.name||user.displayName||user.email,role:g.role||'cashier',
+                    shopId:g.shopId||'',terminal:g.terminal||''};
+          return FS.collection('staff').doc(user.uid).set({
+              uid:user.uid,businessId:me.businessId,email:me.email,name:me.name,role:me.role,
+              shopId:me.shopId,terminal:me.terminal,
+              joinedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+            .then(()=>me).catch(()=>me);
+        })
+        .catch(()=>fallback);
+    })
     .catch(()=>fallback)
     .then(me=>FS.collection('config').doc(me.businessId).get()
       .then(c=>({me,shops:(c.exists&&c.data().shops)||{}}))
       .catch(()=>({me,shops:{}})))
-    .then(({me,shops})=>{ askShop(me,shops); });
+    .then(({me,shops})=>{
+      if(POS_ROLES.indexOf(me.role)<0){
+        const err=document.getElementById('otp-err');
+        err.textContent=(me.name||'This account')+' is set up as '+esc(me.role)
+          +' — that role does not bill. Ask the owner to change it under Admin Settings → POS Portal Users.';
+        err.style.display='block';
+        document.getElementById('shop-step').classList.add('hidden');
+        document.getElementById('login-step').classList.remove('hidden');
+        if(FB_OK&&AUTH.currentUser) AUTH.signOut().catch(()=>{});
+        return;
+      }
+      askShop(me,shops);
+    });
 }
 let _pendingMe=null;
 function askShop(me,shops){
@@ -1083,24 +1189,35 @@ function askShop(me,shops){
   const prev=IDENT&&IDENT.businessId===me.businessId?IDENT:null;
   if(prev&&entries.some(([id])=>id===prev.shopId)) sel.value=prev.shopId;
 
-  // Bound subdomain: the address decides the shop, so the dropdown is locked.
-  // A slug that matches nothing is NOT fatal — a mistyped DNS record must not
-  // stop a counter from billing, so it falls back to the picker and says why.
+  /* TWO things can pin this counter to one shop, and they must not fight:
+     the ADDRESS it was opened at, and the SHOP the owner assigned to this
+     login. Either one locks the picker; the note says which, because "why
+     can I not change this?" has two different answers. The address wins when
+     both apply, since it is the more specific of the two. */
   const bound=matchShopBySlug(shops,SHOP_SLUG);
+  const assigned=(me.shopId&&entries.some(([id])=>id===me.shopId))?me.shopId:'';
   const note=document.getElementById('shop-bound');
+  const pin=bound||assigned;
   sel.disabled=false; note.style.display='none';
-  if(SHOP_SLUG&&bound){
-    sel.value=bound; sel.disabled=true;
-    note.innerHTML='Locked to <b>'+esc(sel.selectedOptions[0]?.textContent||bound)
-      +'</b> by this address ('+esc(location.hostname)+'). Bookmark it on this counter.';
+  if(pin){
+    sel.value=pin; sel.disabled=true;
+    const nm=esc(sel.selectedOptions[0]?.textContent||pin);
+    note.innerHTML=bound
+      ? 'Locked to <b>'+nm+'</b> by this address ('+esc(location.hostname)+'). Bookmark it on this counter.'
+      : 'Your login is set to <b>'+nm+'</b>. The shop owner can change this under Admin Settings → POS Portal Users.';
     note.className='bound ok'; note.style.display='block';
   }else if(SHOP_SLUG){
+    // A slug that matches nothing is NOT fatal — a mistyped DNS record must
+    // not stop a counter from billing, so it falls back to the picker.
     note.innerHTML='No shop is named <b>'+esc(SHOP_SLUG)+'</b> in your settings, so pick it below. '
       +'To lock this address to a shop, set that shop’s <b>slug</b> to <b>'+esc(SHOP_SLUG)+'</b> in the back office.';
     note.className='bound warn'; note.style.display='block';
   }
 
-  document.getElementById('li-term').value=(prev&&prev.terminal)||'T1';
+  const term=document.getElementById('li-term');
+  term.value=me.terminal||(prev&&prev.terminal)||'T1';
+  term.readOnly=!!me.terminal;      // assigned by the owner, not chosen here
+  if(me.terminal) term.style.background='var(--line-2)';
   document.getElementById('login-step').classList.add('hidden');
   document.getElementById('shop-step').classList.remove('hidden');
 }
@@ -1452,6 +1569,111 @@ function matches(p,q){
   return p.nameEn.toLowerCase().includes(q)||p.nameTa.includes(q)
       ||p.sku.toLowerCase().includes(q)||(p.barcode||'').includes(q);
 }
+/* ══════════════ SEARCH SUGGESTIONS ══════════════════════════════════════
+   Two letters and the item is one Enter away. This is the fast path for a
+   counter that does not know codes by heart — the grid is for browsing, the
+   SKU box is for codes, and this is for names.
+
+   Deliberately capped: a list longer than the screen is not a shortlist, it
+   is the grid again. Eight rows, and the footer says how many more there
+   are so nobody thinks the rest do not exist. */
+const SUGG_MAX=8;
+let suggList=[], suggAt=-1;
+
+function suggMatches(q){
+  q=q.toLowerCase().trim();
+  if(q.length<2) return [];
+  const list=onSale();
+  const score=p=>{
+    const en=(p.nameEn||'').toLowerCase(), ta=p.nameTa||'', sku=(p.sku||'').toLowerCase();
+    if(sku===q) return 0;                       // an exact code always wins
+    if(en.startsWith(q)) return 1;              // then a name that starts with it
+    if(ta.startsWith(q)) return 1;
+    if(en.split(/\s+/).some(w=>w.startsWith(q))) return 2;   // then any word in it
+    if(en.includes(q)||ta.includes(q)) return 3;
+    if(sku.startsWith(q)||(p.barcode||'').startsWith(q)) return 4;
+    return -1;
+  };
+  return list.map(p=>({p,r:score(p)})).filter(x=>x.r>=0)
+    .sort((a,b)=>a.r-b.r||(a.p.nameEn||'').localeCompare(b.p.nameEn||''))
+    .map(x=>x.p);
+}
+/* Highlight the typed letters so the reason a row matched is visible. */
+function hi(text,q){
+  const s=String(text||''); if(!q) return esc(s);
+  const i=s.toLowerCase().indexOf(q.toLowerCase());
+  if(i<0) return esc(s);
+  return esc(s.slice(0,i))+'<mark>'+esc(s.slice(i,i+q.length))+'</mark>'+esc(s.slice(i+q.length));
+}
+function onSearchInput(){
+  renderProducts();
+  drawSuggestions();
+}
+function drawSuggestions(){
+  const box=document.getElementById('sugg'); if(!box) return;
+  const q=(document.getElementById('search-input').value||'').trim();
+  if(q.length<2){ closeSuggestions(); return; }
+  const all=suggMatches(q);
+  suggList=all.slice(0,SUGG_MAX); suggAt=suggList.length?0:-1;
+  if(!all.length){
+    box.innerHTML=`<div class="s-none">Nothing matches “${esc(q)}”.
+      <button class="btn" style="height:30px;margin-left:8px" onclick="closeSuggestions();openCustomItem()">Add as custom item</button></div>`;
+    box.classList.remove('hidden'); return;
+  }
+  box.innerHTML=suggList.map((p,i)=>`
+    <div class="s-row ${i===suggAt?'on':''}" role="option" aria-selected="${i===suggAt}"
+         onmouseenter="suggHover(${i})" onclick="suggPick(${i})">
+      <div class="s-nm">${hi(p.nameEn,q)}
+        ${p.nameTa?`<div class="s-ta ta">${hi(p.nameTa,q)}</div>`:''}
+        <div class="s-sku">${esc(p.sku||'')}${p.stock<=0?' · out of stock':''}</div></div>
+      <div style="text-align:right">
+        <div class="s-pr">₹${p.price}</div>
+        <div class="s-un">/${esc(p.unit)}</div></div>
+    </div>`).join('')
+    +(all.length>SUGG_MAX?`<div class="s-foot">${all.length-SUGG_MAX} more — keep typing to narrow it down</div>`:'');
+  box.classList.remove('hidden');
+}
+function closeSuggestions(){
+  const box=document.getElementById('sugg');
+  if(box){ box.classList.add('hidden'); box.innerHTML=''; }
+  suggList=[]; suggAt=-1;
+}
+function suggHover(i){
+  suggAt=i;
+  document.querySelectorAll('#sugg .s-row').forEach((el,k)=>el.classList.toggle('on',k===i));
+}
+function suggPick(i){
+  const p=suggList[i]; if(!p) return;
+  closeSuggestions();
+  document.getElementById('search-input').value='';
+  renderProducts();
+  addOne(p);
+}
+/* Arrows move, Enter commits, Escape backs out. Enter with nothing
+   highlighted still commits the top row, because that is what someone who
+   typed two letters and hit Enter meant. */
+function suggKey(e){
+  const open=suggList.length>0;
+  if(e.key==='ArrowDown'&&open){ e.preventDefault(); suggHover(Math.min(suggAt+1,suggList.length-1)); scrollSugg(); return; }
+  if(e.key==='ArrowUp'&&open){   e.preventDefault(); suggHover(Math.max(suggAt-1,0)); scrollSugg(); return; }
+  if(e.key==='Enter'){
+    if(open){ e.preventDefault(); suggPick(suggAt<0?0:suggAt); }
+    return;
+  }
+  if(e.key==='Escape'){ e.preventDefault(); closeSuggestions(); return; }
+}
+function scrollSugg(){
+  const el=document.querySelector('#sugg .s-row.on');
+  if(el&&el.scrollIntoView) el.scrollIntoView({block:'nearest'});
+}
+// Clicking anywhere else closes it — including on a phone, where there is no
+// blur to rely on when the keyboard is up.
+addEventListener('pointerdown',e=>{
+  if(!document.getElementById('sugg')) return;
+  if(e.target.closest('#sugg')||e.target.closest('#search-input')) return;
+  closeSuggestions();
+},true);
+
 function renderProducts(){
   const q=document.getElementById('search-input').value;
   const off=document.getElementById('grid-off'), btn=document.getElementById('grid-btn');
@@ -1493,7 +1715,8 @@ function renderProducts(){
         <span class="st ${p.stock<=5?'low':''}">${qtyFmt(p.stock,p.unit)}</span>
       </div></button>`).join('');
 }
-function clearSearch(){ const s=document.getElementById('search-input'); s.value=''; renderProducts(); s.focus(); }
+function clearSearch(){
+  closeSuggestions(); const s=document.getElementById('search-input'); s.value=''; renderProducts(); s.focus(); }
 /* An exact-match-only SKU box fails on everything a counter actually types:
    a code with a stray space, a shop that uses short codes, a barcode read
    half-way. Widen it in strict-to-loose order and never guess when the
@@ -1523,7 +1746,7 @@ function skuEnter(){
   el.value='';
   if(hits.length){
     si.value=raw; catFilter=''; gridHidden=false; saveGridPref();
-    renderCats(); renderProducts();
+    renderCats(); renderProducts(); drawSuggestions();
     toast(hits.length+' item'+(hits.length===1?'':'s')+' match “'+raw+'” — pick one');
     if(!isMobile()) si.focus();
   }else{
@@ -1598,7 +1821,7 @@ function qtyAdd(){
   const c=cart();
   // Same product at the same effective rate merges instead of stacking lines
   const ex=c.items.find(i=>i.pid===p.id&&i.rate===net);
-  if(ex) ex.qty=+(ex.qty+qty).toFixed(3);
+  if(ex){ ex.qty=+(ex.qty+qty).toFixed(3); moveToEnd(c,ex); }
   // sku + cat travel with the line so the rollup can break the day down by
   // product and by category without ever re-reading a bill.
   else c.items.push({pid:p.id,sku:p.sku,cat:p.category,gst:p.gst,name:p.nameEn,nameTa:p.nameTa,unit:p.unit,rate:net,qty});
@@ -1676,29 +1899,37 @@ function renderCart(){
   if(!c.items.length){
     body.innerHTML=`<div class="cart-empty"><div>
       <div class="em">🧺</div><b>Cart C${active+1} is empty</b>
-      <span>Tap an item, or scan into the SKU box (F1).</span></div></div>`;
+      <span>Tap an item, type a name (F2) or scan a code (F1).</span></div></div>`;
   }else{
-    body.innerHTML=`<table class="cart">
-      <thead><tr><th>Item</th><th class="num">Rate</th><th style="width:108px;text-align:center">Qty</th><th class="num">Total</th><th style="width:34px"></th></tr></thead>
-      <tbody>${c.items.map((it,i)=>`<tr>
-        <td>
-          <div class="li-nm">${esc(it.name)}${it.custom?'<span class="tag">CUSTOM</span>':''}</div>
-          ${it.nameTa?`<div class="li-ta ta">${esc(it.nameTa)}</div>`:''}
-          <div class="li-un">${esc(it.unit)}</div>
-        </td>
-        <td class="num tnum" style="color:var(--ink-2);font-weight:600">${it.rate}</td>
-        <td>
-          <div class="stepper">
-            <button onclick="bumpQty(${i},-1)" aria-label="Less">−</button>
-            <input id="q-${i}" value="${qtyFmt(it.qty,it.unit)}" inputmode="decimal"
-              onchange="setQty(${i},this.value)" onfocus="this.select()" aria-label="Quantity">
-            <button onclick="bumpQty(${i},1)" aria-label="More">+</button>
-          </div>
-        </td>
-        <td class="num tnum" style="font-weight:800">${(it.rate*it.qty).toFixed(2)}</td>
-        <td><button class="del" onclick="removeItem(${i})" aria-label="Remove"><i data-i="trash-2"></i></button></td>
-      </tr>`).join('')}</tbody></table>`;
+    /* NEWEST AT THE TOP. The line just added is the one being checked, and
+       on a twenty-item basket it was previously off the bottom of the pane
+       where nobody could see it. The array itself stays in the order things
+       were rung up — the receipt prints that order — so the display is
+       reversed and every handler is given the REAL index. */
+    const rows=c.items.map((it,i)=>({it,i})).reverse();
+    const last=c.items.length-1;
+    body.innerHTML=`<div class="cart-rows">${rows.map(({it,i})=>`
+      <div class="crow ${i===last?'fresh':''}">
+        <div class="c-main">
+          <div class="c-nm">${esc(it.name)}${it.custom?'<span class="tag">CUSTOM</span>':''}</div>
+          <div class="c-meta">${it.nameTa?`<span class="ta c-ta">${esc(it.nameTa)}</span>`:''}
+            <span class="tnum">₹${it.rate}</span><span>/${esc(it.unit)}</span>
+            ${it.sku?`<span class="c-sku">${esc(it.sku)}</span>`:''}</div>
+        </div>
+        <div class="c-qty">
+          <button onclick="bumpQty(${i},-1)" aria-label="Less">−</button>
+          <input id="q-${i}" value="${qtyFmt(it.qty,it.unit)}" inputmode="decimal"
+            onchange="setQty(${i},this.value)" onfocus="this.select()"
+            aria-label="Quantity of ${esc(it.name)}">
+          <button onclick="bumpQty(${i},1)" aria-label="More">+</button>
+        </div>
+        <div class="c-amt">
+          <div class="tnum">${(it.rate*it.qty).toFixed(2)}</div>
+          <button class="del" onclick="removeItem(${i})" aria-label="Remove ${esc(it.name)}"><i data-i="trash-2"></i></button>
+        </div>
+      </div>`).join('')}</div>`;
     icons(body);
+    body.scrollTop=0;          // the new line is at the top; show it
   }
   const t=calcTotals();
   document.getElementById('t-sub').textContent=money(t.sub);
