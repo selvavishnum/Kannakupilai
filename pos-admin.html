@@ -110,6 +110,16 @@ textarea.inp{height:auto;padding:8px 10px;min-height:64px;resize:vertical}
 .seg{display:inline-flex;background:var(--line-2);border-radius:8px;padding:2px;gap:2px;flex-wrap:wrap}
 .seg button{height:28px;padding:0 11px;border:0;border-radius:6px;background:transparent;font-size:12px;font-weight:600;color:var(--ink-2)}
 .seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.shopbar{display:flex;align-items:center;gap:7px;height:34px;padding:0 11px;border-radius:9px;
+  background:var(--accent-soft);border:1px solid var(--accent-line);max-width:280px;position:relative}
+.sb-icon{font-size:15px;line-height:1}
+.sb-name{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The picker sits invisibly over the whole pill so the shop name itself is
+   the control — there is no separate arrow to find. */
+.sb-sel{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}
+.sb-sel.hidden{display:none}
+@media(max-width:760px){ .shopbar{max-width:150px} }
+@media(max-width:480px){ .shopbar{max-width:110px;padding:0 8px} }
 .pos-fab{display:inline-flex;align-items:center;justify-content:center;gap:6px;
   height:38px;min-width:38px;padding:0 14px;border-radius:19px;text-decoration:none;
   background:var(--accent);color:#fff;font-size:12.5px;font-weight:700;letter-spacing:.02em;
@@ -310,12 +320,19 @@ textarea.inp{height:auto;padding:8px 10px;min-height:64px;resize:vertical}
         <div class="sub" id="pg-sub"></div>
       </div>
       <div style="margin-left:auto;display:flex;align-items:center;gap:9px;flex-shrink:0">
+        <!-- Which shop am I looking at? On a six-shop business that question
+             has to be answered without clicking anything. -->
+        <div id="shopbar" class="shopbar hidden">
+          <span class="sb-icon" id="sb-icon"></span>
+          <span class="sb-name" id="sb-name"></span>
+          <select id="sb-sel" class="sb-sel hidden" onchange="switchShop(this.value)" aria-label="Switch shop"></select>
+        </div>
         <span class="pill ok" id="src-pill">demo</span>
         <span style="font-size:12.5px;font-weight:600" class="tnum" id="today"></span>
         <!-- The counter is the thing people actually need from here, and it
              was buried at the bottom of a sidebar that is collapsed on a
              phone. One tap, always in the same corner. -->
-        <a href="pos.html" class="pos-fab" title="Open the billing counter" aria-label="Open billing">
+        <a href="pos.html" class="pos-fab" id="pos-fab" title="Open the billing counter" aria-label="Open billing">
           <i data-i="calculator"></i><span>POS</span></a>
       </div>
     </header>
@@ -756,7 +773,12 @@ const NAV=[
 ];
 function renderNav(){
   document.getElementById('nav').innerHTML=NAV.map(n=>{
-    if(!n.kids) return `<button class="nav-item ${page===n.k?'on':''}" onclick="go('${n.k}')"><i data-i="${n.ic}"></i>${esc(n.l)}</button>`;
+    if(!n.kids) return canSee(n.k)
+      ? `<button class="nav-item ${page===n.k?'on':''}" onclick="go('${n.k}')"><i data-i="${n.ic}"></i>${esc(n.l)}</button>` : '';
+    // A group with nothing left in it is not a group — drop the whole thing
+    // rather than leaving a heading that opens onto an empty list.
+    n=Object.assign({},n,{kids:n.kids.filter(k=>canSee(k[0]))});
+    if(!n.kids.length) return '';
     const kidOn=n.kids.some(k=>k[0]===page);
     const open=openGroups[n.g]||kidOn;
     return `<button class="nav-item ${open?'open':''} ${kidOn?'on':''}" onclick="toggleGroup('${n.g}')">
@@ -771,6 +793,15 @@ function toggleGroup(g){ openGroups[g]=!(openGroups[g]||NAV.find(n=>n.g===g).kid
 
 /* ═════════ ROUTER ═════════ */
 function go(k){
+  if(!canSee(k)){
+    page=k; closeSide(); renderNav();
+    title('Not available');
+    V(`<div class="card"><div class="empty">
+      <b>This screen is not part of the ${esc(roleLabel(myRole()))} role.</b><br>
+      Ask the shop owner if you need it — they can change your role under
+      Admin Settings → Admin Portal Users.</div></div>`);
+    return;
+  }
   page=k; closeSide(); renderNav();
   document.getElementById('pg-sub').textContent='';
   if(k.startsWith('ord-')) return routeOrders(k);
@@ -1432,7 +1463,17 @@ function pgStoreSettings(){
     </div>
 
     <div class="grid g2">
-      <div class="card"><div class="card-hd"><h3>Receipt header</h3></div><div class="card-b">
+      <div class="card"><div class="card-hd"><h3>This shop</h3></div><div class="card-b">
+        <div class="fg"><label class="fl">Shop name</label>
+          <input class="inp" id="sn-name" value="${esc((ME.shops[priceShop]||{}).name||'')}"
+            onchange="renameShop(this.value)">
+          <div style="font-size:11.5px;color:var(--ink-3);margin-top:3px">
+            The name the whole back office uses. Changing it here changes the header, the
+            price list, the reports and every other screen at once — tills pick it up at
+            their next sign-in.</div></div>
+      </div></div>
+
+      <div class="card" style="margin-top:13px"><div class="card-hd"><h3>Receipt header</h3></div><div class="card-b">
         <div style="font-size:12.5px;color:var(--ink-2);margin-bottom:12px">
           Printed at the top of every bill from this shop. Leave the name blank to use the shop name.</div>
         ${row('store','Shop name on the bill','')}
@@ -1508,6 +1549,27 @@ function pgStoreSettings(){
     </div>`);
   icons(document.getElementById('view'));
 }
+/* The shop's name lives on the config document — the one place every screen
+   reads it from. Writing it anywhere else would create a second copy, and
+   two copies of a name is one copy that is wrong. */
+function renameShop(name){
+  name=String(name||'').trim();
+  if(!name||!ME||!ME.shops[priceShop]) return;
+  const old=ME.shops[priceShop].name;
+  if(name===old) return;
+  if(DEMO_ADMIN||!FB_OK) return toast('Demo — the name is not saved');
+  const shops=JSON.parse(JSON.stringify(ME.shops));
+  shops[priceShop].name=name;
+  shops[priceShop].slug=slugify(name);
+  FS.collection('config').doc(ME.businessId).set({shops:shops},{merge:true})
+    .then(()=>{
+      ME.shops=shops;
+      renderShopBar();
+      go(page);                       // redraw whatever is open under the new name
+      toast('Renamed to '+name+' — tills will show it at their next sign-in');
+    })
+    .catch(e=>toast('Could not rename: '+(e.message||e.code)));
+}
 function setShopSetting(k,v){
   const c=CATS[priceShop]; if(!c) return;
   c.settings=c.settings||{};
@@ -1516,6 +1578,7 @@ function setShopSetting(k,v){
   if(b){ b.textContent='Save to all tills •'; b.classList.add('btn-p'); }
 }
 function saveShopSettings(){
+  renderShopBar();
   const b=document.getElementById('set-save'); if(b){ b.disabled=true; b.textContent='Saving…'; }
   saveCatalog(priceShop)
     .then(()=>{ toast(shopName(priceShop)+' settings are live on every till there'); if(b){ b.textContent='Saved'; b.classList.remove('btn-p'); } })
@@ -2144,6 +2207,8 @@ const SPECIAL={
   // one and see stale rows in the other. 'prod-price' stays routable because
   // the till deep-links to it.
   'prod-inv':    {t:'Product Inventory',      fn:pgPriceList},
+  'set-admin':   {t:'Admin Portal Users',     fn:()=>pgStaff(false)},
+  'set-pos':     {t:'POS Portal Users',       fn:()=>pgStaff(true)},
   'prod-price':  {t:'Product Inventory',      fn:pgPriceList},
   'prod-grid':   {t:'Prices — all shops',     fn:pgPriceGrid},
   'reports':     {t:'Reports',                fn:pgReports},
@@ -2216,6 +2281,63 @@ function matchShopBySlug(shops,slug){
   for(const [id,sh] of ent) if(slugify(sh&&sh.name).startsWith(slug+'-')) return id;
   return '';
 }
+/* ══════════════ ROLES ═══════════════════════════════════════════════════
+   A role is a list of screens, and nothing more clever than that. The list
+   is the whole definition — there is no second place where a role's powers
+   are decided, so a role cannot mean one thing in the nav and another in
+   the router.
+
+   THIS IS NOT SECURITY ON ITS OWN. Anyone can open DevTools and call go()
+   for a screen their role hides. What actually stops a cashier reading
+   payroll is the Firestore rules, which is why the rules are scoped by
+   businessId and why the grant document — not this table — decides which
+   business someone belongs to. This table decides what is USEFUL to show. */
+const ROLES={
+  owner:     {label:'Owner',     pos:true,  desc:'Everything, including staff accounts'},
+  manager:   {label:'Manager',   pos:true,  desc:'Everything except staff accounts'},
+  inventory: {label:'Inventory', pos:false, desc:'Products, stock and purchases only'},
+  cashier:   {label:'Cashier',   pos:true,  desc:'The billing counter only — no back office'},
+  delivery:  {label:'Delivery',  pos:false, desc:'Orders and deliveries only'},
+};
+const ROLE_KEYS=Object.keys(ROLES);
+
+// Screens each role may open. '*' means every screen there is.
+const ROLE_SCREENS={
+  owner:['*'],
+  // A manager runs the shop but does not hand out logins — that stays with
+  // whoever owns the business.
+  manager:['*','-set-admin','-set-pos'],
+  /* No dashboard for these two, deliberately. It leads with the day's
+     takings, the cash in the drawer and the payment mix — none of which is
+     any of a stock keeper's or a delivery rider's business. They land on
+     their own first screen instead. */
+  inventory:['prod-inv','prod-grid','prod-cat','prod-indent','prod-inward',
+             'prod-stock','prod-brands','prod-dtypes','prod-barcode','warehouses',
+             'suppliers','prod-po','raw-mat','raw-po'],
+  delivery:['ord-dash','ord-New','ord-Prepare','ord-Package','ord-Ship','ord-Delivery',
+            'ord-Payment','ord-Closed','ord-History','ord-Returns'],
+  cashier:[],                       // the back office is not for the counter
+};
+/* An unknown role must never lock somebody out of a business they OWN.
+   A profile document written by an older build may have no role field at
+   all; falling back to 'cashier' there would hide the whole back office
+   from the person who created it. Owning the business is decided by the
+   businessId, which is the same thing the Firestore rules go on. */
+function myRole(){
+  if(DEMO_ADMIN) return 'owner';
+  if(!ME) return 'cashier';
+  if(ME.role&&ROLES[ME.role]) return ME.role;
+  return ME.businessId===ME.uid?'owner':'cashier';
+}
+function canSee(key){
+  if(DEMO_ADMIN) return true;
+  const list=ROLE_SCREENS[myRole()]||[];
+  if(list.indexOf('-'+key)>=0) return false;
+  return list.indexOf('*')>=0 || list.indexOf(key)>=0;
+}
+const canUsePos=()=>DEMO_ADMIN||!!(ROLES[myRole()]||{}).pos;
+const roleLabel=r=>(ROLES[r]||{}).label||r||'—';
+
 const shopName=id=>(ME&&ME.shops[id]&&ME.shops[id].name)||id;
 const catalogId=sid=>ME.businessId+'__'+sid;
 const catKey=x=>String(x||'').replace(/[.$\[\]#\/]/g,'_').slice(0,60);
@@ -2318,14 +2440,61 @@ function afterAuth(){
   document.getElementById('lock').style.display='none';
   if(ME&&ME.isNew) return startOnboarding();
   document.getElementById('onboard').style.display='none';
+  /* The counter roles have no back office. Landing them on an empty shell
+     with every menu hidden reads as "broken"; send them where they belong. */
+  if(ME&&!(ROLE_SCREENS[myRole()]||[]).length){
+    document.getElementById('lock').style.display='';
+    document.getElementById('lock-err').innerHTML=
+      esc(ME.name||'You')+' is set up as a '+esc(roleLabel(myRole()))
+      +' — that is the billing counter, not the back office. '
+      +'<a href="pos.html" style="color:var(--accent);font-weight:600">Open billing</a>';
+    document.getElementById('lock-err').style.display='block';
+    if(FB_OK&&AUTH.currentUser) AUTH.signOut().catch(()=>{});
+    ME=null;
+    return;
+  }
   bootAdmin();
 }
+/* Who is this, and whose business is it?
+
+   A profile document answers both. When there is none, the person is either
+   brand new (their own business) or somebody a shop owner invited — and the
+   invitation is the only thing that can put them in someone else's business,
+   both here and in the Firestore rules. Finding one, we write the profile
+   the rules will read from then on. */
 function resolveMe(user){
+  const email=(user.email||'').toLowerCase();
   return FS.collection('staff').doc(user.uid).get()
     .catch(()=>({exists:false}))
-    .then(d=>{ const st=d.exists?d.data():{};
-      return {uid:user.uid,businessId:st.businessId||user.uid,email:user.email||'',
-              name:st.name||user.displayName||user.email||'Manager',role:st.role||'owner'}; })
+    .then(d=>{
+      if(d.exists){ const st=d.data();
+        return {uid:user.uid,businessId:st.businessId||user.uid,email:user.email||'',
+                name:st.name||user.displayName||user.email||'Manager',role:st.role||'owner',
+                shopId:st.shopId||'',terminal:st.terminal||''}; }
+      if(!email) return {uid:user.uid,businessId:user.uid,email:'',
+                         name:user.displayName||'Owner',role:'owner'};
+      return FS.collection('staff_grants').where('email','==',email).limit(1).get()
+        .catch(()=>({empty:true}))
+        .then(sn=>{
+          if(sn.empty) return {uid:user.uid,businessId:user.uid,email:user.email||'',
+                               name:user.displayName||user.email,role:'owner'};
+          const g=sn.docs[0].data();
+          const me={uid:user.uid,businessId:g.businessId,email:user.email||'',
+                    name:g.name||user.displayName||user.email,role:g.role||'cashier',
+                    shopId:g.shopId||'',terminal:g.terminal||''};
+          // Write the profile the rules read, and mark the invitation used so
+          // the owner can see who has actually turned up.
+          return FS.collection('staff').doc(user.uid).set({
+              uid:user.uid,businessId:me.businessId,email:me.email,name:me.name,
+              role:me.role,shopId:me.shopId,terminal:me.terminal,
+              joinedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+            .then(()=>FS.collection('staff_grants').doc(sn.docs[0].id)
+              .set({linked:true,linkedUid:user.uid,
+                    linkedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(()=>{}))
+            .then(()=>me)
+            .catch(()=>me);      // a write that fails must not block sign-in
+        });
+    })
     .then(me=>FS.collection('config').doc(me.businessId).get()
       .then(c=>{ me.shops=(c.exists&&c.data().shops)||{}; return me; })
       .catch(()=>{ me.shops={}; return me; }))
@@ -2333,7 +2502,11 @@ function resolveMe(user){
       /* No shops on the config document means nobody has set this account up
          yet. Inventing a "Main shop" here would silently skip onboarding and
          leave the owner with a shop they never named, so say so instead. */
-      me.isNew=!Object.keys(me.shops).length;
+      /* Only somebody who owns the business can be asked to set it up. An
+         invited staff member whose business has no shops yet is looking at
+         an owner who has not finished — sending them into onboarding would
+         let a cashier name someone else's shop. */
+      me.isNew=!Object.keys(me.shops).length && me.businessId===me.uid;
       if(me.isNew){ ME=me; DEMO_ADMIN=false; clearDemoData(); return; }
       const bound=matchShopBySlug(me.shops,SHOP_SLUG);
       me.scope=bound||''; me.locked=!!bound;
@@ -2343,6 +2516,247 @@ function resolveMe(user){
       return loadCatalogs().then(loadLiveRollups);
     });
 }
+/* ══════════════ STAFF ACCOUNTS ══════════════════════════════════════════
+   WHAT THIS DELIBERATELY DOES NOT DO: store passwords.
+
+   The system this replaces shows a Users table with a Password column the
+   admin can read and edit. That is the one thing not copied here. A password
+   sitting in a database is readable by anyone who reaches the database, it
+   is almost always a password the person reuses elsewhere, and it means the
+   shop is holding a credential it can never prove it did not misuse.
+
+   Passwords live in Firebase Auth, where nobody — not the owner, not me,
+   not a Firestore rule — can read them back. What the shop stores is an
+   INVITATION: an email, a role, and a shop. Two ways to use it:
+
+     Invite      the person signs in with Google or sets their own password
+     Set one now the owner types a first password, it goes straight to
+                 Firebase Auth and is never written to Firestore
+
+   "Set one now" runs on a SECOND Firebase app instance, because
+   createUserWithEmailAndPassword signs you in as the account it just made —
+   on the main instance that would sign the owner out mid-task. */
+const GRANT_ID=(bid,email)=>bid+'__'+String(email||'').trim().toLowerCase();
+
+let _grants=[], _grantsFor='';
+function loadGrants(){
+  if(DEMO_ADMIN||!ME||!FB_OK) return Promise.resolve([]);
+  return FS.collection('staff_grants').where('businessId','==',ME.businessId).get()
+    .then(sn=>{ _grants=sn.docs.map(d=>Object.assign({_id:d.id},d.data())); _grantsFor=ME.businessId; return _grants; });
+}
+
+function pgStaff(posPortal){
+  if(DEMO_ADMIN||!ME) return V(liveGate(posPortal?'POS portal users':'Admin portal users'));
+  if(myRole()!=='owner') return V(`<div class="card"><div class="empty">
+    Only the shop owner can add or change logins.</div></div>`);
+  sub(posPortal?'Who can sign in at the billing counter'
+                :'Who can sign in to the back office, and what they can open');
+  V(`<div class="toolbar">
+      <button class="btn btn-p" onclick="staffForm(${posPortal},'')"><i data-i="plus"></i>Add ${posPortal?'counter login':'staff login'}</button>
+      <button class="btn" onclick="drawStaff(${posPortal})"><i data-i="refresh-cw"></i>Refresh</button>
+    </div>
+    <div id="staff-body"><div class="card"><div class="empty">Loading…</div></div></div>`);
+  icons(document.getElementById('view'));
+  loadGrants().then(()=>drawStaff(posPortal))
+    .catch(e=>{ document.getElementById('staff-body').innerHTML=
+      `<div class="card"><div class="empty">Could not read the staff list: ${esc(e.message||e)}</div></div>`; });
+}
+function drawStaff(posPortal){
+  const el=document.getElementById('staff-body'); if(!el) return;
+  const rows=_grants.filter(g=>posPortal?(ROLES[g.role]||{}).pos:true)
+                    .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  const head=posPortal
+    ? '<tr><th>Name</th><th>Email</th><th>Role</th><th>Shop</th><th>Terminal</th><th>Sign-in</th><th></th></tr>'
+    : '<tr><th>Name</th><th>Email</th><th>Role</th><th>Can open</th><th>Sign-in</th><th></th></tr>';
+  el.innerHTML=`
+    <div class="card" style="margin-bottom:13px;background:var(--accent-soft);border-color:var(--accent-line)">
+      <div class="card-b" style="font-size:12.5px;line-height:1.6;color:var(--ink-2)">
+        <b style="color:var(--ink)">Passwords are not stored here, and cannot be.</b>
+        They live in Firebase Auth where nobody can read them back — not even you.
+        Invite someone and they choose their own; or set a first password, which goes
+        straight to Firebase and is never written down. Either way you can change
+        somebody's role or remove their access at any time, without knowing their password.
+      </div></div>
+    ${rows.length?`<div class="card"><div class="tw"><table><thead>${head}</thead><tbody>
+      ${rows.map(g=>`<tr>
+        <td><b>${esc(g.name||'—')}</b></td>
+        <td class="mono" style="font-size:12px">${esc(g.email)}</td>
+        <td><span class="pill">${esc(roleLabel(g.role))}</span></td>
+        ${posPortal
+          ? `<td>${esc(g.shopId?shopName(g.shopId):'Any shop')}</td>
+             <td class="tnum"><b>${esc(g.terminal||'—')}</b></td>`
+          : `<td style="font-size:12px;color:var(--ink-2)">${esc((ROLES[g.role]||{}).desc||'')}</td>`}
+        <td style="font-size:12px;color:${g.linked?'var(--ink-2)':'var(--ink-3)'}">
+          ${g.linked?'has signed in':'not yet signed in'}</td>
+        <td style="white-space:nowrap">
+          <button class="btn" style="height:30px;padding:0 9px" onclick="staffForm(${posPortal},'${esc(g._id)}')">Edit</button>
+          <button class="btn" style="height:30px;padding:0 9px;color:var(--danger)" onclick="staffRemove('${esc(g._id)}',${posPortal})">Remove</button>
+        </td></tr>`).join('')}
+    </tbody></table></div></div>`
+    :`<div class="card"><div class="empty">
+        No ${posPortal?'counter':'staff'} logins yet. Everything runs under your own account until you add one.</div></div>`}`;
+  icons(el);
+}
+
+/* Terminals are a fixed set, not free text: two counters that pick the same
+   name issue duplicate bill numbers, and a typo is exactly how that happens. */
+const TERMINALS=['T1','T2','T3','T4','T5'];
+
+function staffForm(posPortal,id){
+  const g=_grants.find(x=>x._id===id)||{};
+  const editing=!!id;
+  const allowed=ROLE_KEYS.filter(r=>r!=='owner'&&(posPortal?ROLES[r].pos:true));
+  const shopOpts=Object.keys(ME.shops||{});
+  const taken=_grants.filter(x=>x._id!==id&&x.terminal).map(x=>x.shopId+'|'+x.terminal);
+  V(`<div class="card" style="max-width:560px"><div class="card-hd">
+      <h3>${editing?'Edit':'Add'} ${posPortal?'counter login':'staff login'}</h3></div>
+    <div class="card-b">
+      <div class="fg"><label class="fl">Name</label>
+        <input class="inp" id="sf-name" value="${esc(g.name||'')}" placeholder="Who is this?"></div>
+      <div class="fg"><label class="fl">Email (their Google account, or the one they will sign in with)</label>
+        <input class="inp" id="sf-email" type="email" ${editing?'disabled':''} value="${esc(g.email||'')}" placeholder="name@gmail.com">
+        ${editing?'<div style="font-size:11.5px;color:var(--ink-3);margin-top:3px">The email is the identity — remove this login and add a new one to change it.</div>':''}</div>
+
+      <div class="fg"><label class="fl">Role</label>
+        <select class="inp" id="sf-role" onchange="staffRoleHint()">
+          ${allowed.map(r=>`<option value="${r}" ${g.role===r?'selected':''}>${ROLES[r].label}</option>`).join('')}
+        </select>
+        <div id="sf-hint" style="font-size:12px;color:var(--ink-2);margin-top:5px"></div></div>
+
+      ${posPortal?`
+      <div class="fg"><label class="fl">Shop</label>
+        <select class="inp" id="sf-shop">
+          <option value="">Any shop</option>
+          ${shopOpts.map(id2=>`<option value="${esc(id2)}" ${g.shopId===id2?'selected':''}>${esc(shopName(id2))}</option>`).join('')}
+        </select></div>
+      <div class="fg"><label class="fl">Terminal</label>
+        <select class="inp" id="sf-term">
+          <option value="">Ask at sign-in</option>
+          ${TERMINALS.map(t2=>`<option value="${t2}" ${g.terminal===t2?'selected':''}>${t2}</option>`).join('')}
+        </select>
+        <div style="font-size:11.5px;color:var(--ink-3);margin-top:3px">
+          Bill numbers are prefixed with this. Two counters in the same shop must never share one.</div></div>`:''}
+
+      <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:14px">
+        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="sf-setpw" style="width:17px;height:17px;margin-top:2px;accent-color:var(--accent)"
+            onchange="document.getElementById('sf-pw-fg').style.display=this.checked?'':'none'">
+          <span><b style="font-size:13.5px">Set their first password now</b>
+            <div style="font-size:12px;color:var(--ink-3);line-height:1.5">
+              Creates the Firebase account straight away. Leave this off and they sign in
+              with Google, or set their own password — nothing to hand over and nothing to
+              write down.</div></span></label>
+        <div class="fg" id="sf-pw-fg" style="display:none;margin-top:10px">
+          <input class="inp" id="sf-pw" type="password" autocomplete="new-password" placeholder="At least 6 characters">
+          <div style="font-size:11.5px;color:var(--ink-3);margin-top:3px">
+            Tell it to them once and ask them to change it. It is not saved anywhere you can look it up.</div></div>
+      </div>
+
+      <div id="sf-err" style="display:none;font-size:12.5px;color:var(--danger);font-weight:500;margin-top:12px"></div>
+      <div style="display:flex;gap:9px;margin-top:16px">
+        <button class="btn" onclick="go('${posPortal?'set-pos':'set-admin'}')">Cancel</button>
+        <button class="btn btn-p" id="sf-save" style="height:44px;padding:0 20px"
+          onclick="staffSave(${posPortal},'${esc(id)}')">${editing?'Save':'Create login'}</button>
+      </div>
+      ${taken.length?`<div style="font-size:11.5px;color:var(--ink-3);margin-top:12px">
+        Already in use: ${taken.map(x=>esc(x.replace('|',' · '))).join(', ')}</div>`:''}
+    </div></div>`);
+  staffRoleHint();
+  icons(document.getElementById('view'));
+}
+function staffRoleHint(){
+  const r=document.getElementById('sf-role').value;
+  const el=document.getElementById('sf-hint'); if(!el) return;
+  const d=ROLES[r]||{};
+  el.innerHTML=esc(d.desc||'')+(d.pos?' · <b>can bill at the counter</b>':' · cannot open the counter');
+}
+
+function staffSave(posPortal,id){
+  const err=document.getElementById('sf-err'), btn=document.getElementById('sf-save');
+  const show=m=>{ err.textContent=m; err.style.display='block'; };
+  err.style.display='none';
+  const name=(document.getElementById('sf-name').value||'').trim();
+  const email=(document.getElementById('sf-email').value||'').trim().toLowerCase();
+  const role=document.getElementById('sf-role').value;
+  const shopId=posPortal?(document.getElementById('sf-shop').value||''):'';
+  const terminal=posPortal?(document.getElementById('sf-term').value||''):'';
+  const setPw=document.getElementById('sf-setpw').checked;
+  const pw=document.getElementById('sf-pw').value||'';
+
+  if(!name) return show('Enter a name.');
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return show('Enter a valid email address.');
+  if(setPw&&pw.length<6) return show('A first password must be at least 6 characters.');
+  if(!FB_OK||!ME) return show('Cannot reach Firebase from this device.');
+  if(email===(ME.email||'').toLowerCase()) return show('That is your own account — you already have full access.');
+  // Two counters sharing a terminal name issue duplicate bill numbers.
+  const clash=_grants.find(g=>g._id!==id&&terminal&&g.terminal===terminal&&(g.shopId||'')===shopId);
+  if(clash) return show(terminal+' is already used by '+(clash.name||clash.email)
+    +(shopId?' at '+shopName(shopId):'')+'. Give this counter a different terminal.');
+
+  const gid=id||GRANT_ID(ME.businessId,email);
+  const doc={businessId:ME.businessId, email:email, name:name, role:role,
+             shopId:shopId, terminal:terminal,
+             updatedAt:firebase.firestore.FieldValue.serverTimestamp()};
+  btn.disabled=true; btn.textContent='Saving…';
+
+  // The invitation goes in FIRST. If the account creation then fails the
+  // person can still sign in with Google and the grant is waiting; the other
+  // order would create an account nobody has been given access for.
+  FS.collection('staff_grants').doc(gid).set(doc,{merge:true})
+    .then(()=>setPw?createStaffAuth(email,pw):null)
+    .then(res=>{
+      loadGrants().then(()=>{ go(posPortal?'set-pos':'set-admin'); });
+      toast(res==='exists'
+        ? name+' already had an account — the role is saved, their existing password still works'
+        : setPw ? name+' can sign in now with the password you set'
+                : name+' can sign in with Google, or set their own password');
+    })
+    .catch(e=>{
+      show(({'auth/email-already-in-use':'They already have an account — untick “set their first password” and save; their existing password still works.',
+             'auth/weak-password':'That password is too short.',
+             'auth/invalid-email':'That email address is not valid.',
+             'permission-denied':'Only the shop owner can add logins.'})[e.code]
+        ||('Could not save: '+(e.message||e.code)));
+    })
+    .finally(()=>{ btn.disabled=false; btn.textContent=id?'Save':'Create login'; });
+}
+
+/* createUserWithEmailAndPassword signs you in as the new account. On the
+   main app instance that would sign the OWNER out in the middle of adding
+   staff, so this runs on a throwaway second instance and deletes it after.
+   The password never touches Firestore. */
+let _authApp=null;
+function createStaffAuth(email,pw){
+  try{
+    if(!_authApp) _authApp=firebase.initializeApp(FB_CONFIG,'staffmaker');
+  }catch(e){ _authApp=firebase.app('staffmaker'); }
+  const a2=_authApp.auth();
+  return a2.createUserWithEmailAndPassword(email,pw)
+    .then(()=>a2.signOut().catch(()=>{}))
+    .catch(e=>{
+      if(e&&e.code==='auth/email-already-in-use'){ return a2.signOut().catch(()=>{}).then(()=>'exists'); }
+      return a2.signOut().catch(()=>{}).then(()=>{ throw e; });
+    });
+}
+
+function staffRemove(id,posPortal){
+  const g=_grants.find(x=>x._id===id); if(!g) return;
+  if(!confirm('Remove '+(g.name||g.email)+"'s access?\n\nTheir Firebase account is not deleted — they simply stop being able to open this business. Bills they already took are untouched.")) return;
+  FS.collection('staff_grants').doc(id).delete()
+    .then(()=>{
+      /* The grant is what the RULES check, so deleting it is what actually
+         removes access. The profile document is tidied up too where it
+         exists, but the grant is the one that matters. */
+      return FS.collection('staff').where('businessId','==',ME.businessId)
+        .where('email','==',g.email).limit(5).get()
+        .then(sn=>Promise.all(sn.docs.map(d=>d.ref.delete().catch(()=>{}))))
+        .catch(()=>{});
+    })
+    .then(()=>loadGrants()).then(()=>drawStaff(posPortal))
+    .then(()=>toast((g.name||g.email)+' can no longer open this business'))
+    .catch(e=>toast('Could not remove: '+(e.message||e.code)));
+}
+
 /* ══════════════ FIRST RUN ══════════════════════════════════════════════
    Two questions and then the dashboard. The shop types are the SAME list
    the ledger app uses, so an account set up here and one set up there are
@@ -2561,16 +2975,62 @@ function fetchRollups(days){
    that survives until someone clears site data is not a lock. */
 function lockAdmin(){ signOutAdmin(); }
 
+/* The first screen a role can actually open. Landing every role on the
+   dashboard would show half of them a "not available" page on arrival. */
+function homeScreen(){
+  if(canSee('dashboard')) return 'dashboard';
+  const list=ROLE_SCREENS[myRole()]||[];
+  const first=list.find(k=>k.charAt(0)!=='-'&&k!=='*');
+  return first||'dashboard';
+}
 function bootAdmin(){
   renderNav();
   // The till deep-links here (#prod-price) rather than telling the manager to
   // go and find the screen themselves.
   const h=(location.hash||'').replace(/^#/,'');
-  go(SPECIAL[h]||SCHEMA[h]||h.startsWith('ord-')?h:'dashboard');
+  const wanted=(SPECIAL[h]||SCHEMA[h]||h.startsWith('ord-'))?h:homeScreen();
+  go(canSee(wanted)?wanted:homeScreen());
   icons();
   updateSrcPill();
 }
+/* One source for the shop name: the config document. The header, the price
+   list, the settings screen and the printed receipt all read from it, so a
+   rename lands everywhere at once and there is no second copy to drift. */
+function renderShopBar(){
+  const bar=document.getElementById('shopbar'); if(!bar) return;
+  if(DEMO_ADMIN||!ME||!ME.shops||!Object.keys(ME.shops).length){ bar.classList.add('hidden'); return; }
+  const ids=Object.keys(ME.shops);
+  const cur=(priceShop&&ME.shops[priceShop])?priceShop:(ME.scope||ids[0]);
+  priceShop=cur;
+  const sh=ME.shops[cur]||{};
+  document.getElementById('sb-icon').textContent=sh.icon||'🏪';
+  document.getElementById('sb-name').textContent=sh.name||cur;
+  const sel=document.getElementById('sb-sel');
+  // Locked to one shop by its own subdomain, or only one shop exists: then
+  // the name is a label, not a menu.
+  const canSwitch=ids.length>1 && !ME.locked;
+  sel.classList.toggle('hidden',!canSwitch);
+  bar.style.cursor=canSwitch?'pointer':'default';
+  bar.title=canSwitch?'Switch shop':(sh.name||'');
+  if(canSwitch) sel.innerHTML=ids.map(id=>
+    `<option value="${esc(id)}" ${id===cur?'selected':''}>${esc(ME.shops[id].name||id)}</option>`).join('');
+  bar.classList.remove('hidden');
+}
+function switchShop(id){
+  if(!ME||!ME.shops[id]) return;
+  priceShop=id; ME.scope=id;
+  renderShopBar();
+  // Redraw whatever is open so it is about the shop now named in the header.
+  go(page);
+  toast('Now showing '+shopName(id));
+}
 function updateSrcPill(){
+  renderShopBar();
+  // A shortcut to a door this role cannot open is worse than no shortcut.
+  const fab=document.getElementById('pos-fab');
+  if(fab) fab.style.display=canUsePos()?'':'none';
+  const foot=document.querySelector('.side-foot a[href="pos.html"]');
+  if(foot) foot.style.display=canUsePos()?'':'none';
   const el=document.getElementById('src-pill'); if(!el) return;
   if(DEMO_ADMIN||!ME){ el.textContent='demo data'; el.className='pill'; return; }
   el.textContent=ME.locked?shopName(ME.scope):Object.keys(ME.shops).length+' shops';

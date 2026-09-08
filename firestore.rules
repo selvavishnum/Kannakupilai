@@ -15,6 +15,27 @@ service cloud.firestore {
         (request.auth.uid == bid || myBusinessId() == bid);
     }
 
+    // The email on the signed-in token, lowercased. Google and password
+    // sign-in both carry one; anonymous sign-in does not, hence the guard.
+    function myEmail() {
+      return request.auth != null && request.auth.token.email != null
+        ? request.auth.token.email.lower() : '';
+    }
+
+    // An invitation the OWNER wrote, at a path derived from the business and
+    // the invited email so it can be looked up here without a query.
+    // This is what lets someone join a business they do not own — and the
+    // only thing that does.
+    function hasGrant(bid) {
+      return myEmail() != '' &&
+        exists(/databases/$(database)/documents/staff_grants/$(bid + '__' + myEmail()));
+    }
+
+    // A businessId a user is allowed to claim on their OWN profile document.
+    function mayClaim(bid) {
+      return bid == request.auth.uid || hasGrant(bid);
+    }
+
     // Staff documents come in two shapes:
     //  1. Self profile docs, keyed by the doc owner's own auth uid — always
     //     carry a 'uid' field. Only that owner (or admin) may write it.
@@ -49,8 +70,19 @@ service cloud.firestore {
       // its own collection and lock this one to ownsBusiness().
       allow read: if true;
 
+      /* ⚠️ THIS RULE USED TO BE A TENANT-ISOLATION HOLE.
+         The self-profile branch checked that the document was keyed by your
+         own uid and carried your own uid — but placed NO constraint on
+         businessId. Since myBusinessId() reads exactly this document, any
+         signed-in user could write staff/{ownUid} with someone else's
+         businessId and ownsBusiness() would then pass for that business:
+         their transactions, suppliers, config, bills and catalog, readable
+         and writable. `staff` is world-readable, so the businessIds to try
+         were listable by anyone. mayClaim() closes it: your own uid, or a
+         business whose owner has invited your email. */
       allow create: if isAdmin() || (request.auth != null && (
-        (docId == request.auth.uid && request.resource.data.uid == request.auth.uid) ||
+        (docId == request.auth.uid && request.resource.data.uid == request.auth.uid
+          && mayClaim(request.resource.data.businessId)) ||
         (!('uid' in request.resource.data) &&
           request.resource.data.businessId == request.auth.uid)
       ));
@@ -62,8 +94,12 @@ service cloud.firestore {
       // change the doc's businessId or uid (that's the field that grants
       // access, and must stay under the control of the doc's own owner /
       // the verified-grant flow in setManualBusinessId only).
+      /* Same hole on the way in through update: the owner-of-the-document
+         branch let you rewrite your own businessId to anything afterwards,
+         which reaches the identical outcome one step later. */
       allow update: if isAdmin() || (request.auth != null && (
-        resource.data.uid == request.auth.uid ||
+        (resource.data.uid == request.auth.uid &&
+          mayClaim(request.resource.data.businessId)) ||
         (ownsBusiness(resource.data.businessId) &&
           request.resource.data.businessId == resource.data.businessId &&
           request.resource.data.get('uid', null) == resource.data.get('uid', null))
@@ -235,6 +271,46 @@ service cloud.firestore {
       // send only `items`) as well as for a full rewrite from the back office.
       allow update: if isAdmin() || (ownsBusiness(resource.data.businessId)
                        && request.resource.data.businessId == resource.data.businessId);
+      allow delete: if isAdmin() || ownsBusiness(resource.data.businessId);
+    }
+
+    /* Staff invitations, keyed `{businessId}__{email}` so a rule can look one
+       up without a query. This is the ONLY way to join a business you do not
+       own, so who can write one matters more than anything else here: only
+       that business's owner, and the businessId in the document must match
+       the one in its own id. Reading is restricted to the business too — the
+       set of invited emails is not public.
+
+       The document holds a role and a shop, never a password. Passwords live
+       in Firebase Auth where nobody, including the owner, can read them. */
+    match /staff_grants/{grantId} {
+      /* The business can read its own invitations, and you can read one
+         addressed to you — otherwise a new staff member has no way to find
+         out which business invited them, and could never create their own
+         profile document. `email` is stored already-lowercased so the query
+         a client runs (where email == myEmail) matches this condition
+         exactly; a rule that lowercased here instead would not be provably
+         satisfiable and Firestore would reject the query. */
+      allow read: if isAdmin() || ownsBusiness(resource.data.businessId)
+                  || resource.data.email == myEmail();
+
+      allow create: if isAdmin() || (
+        ownsBusiness(request.resource.data.businessId)
+        && request.resource.data.businessId is string
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 0
+        && request.resource.data.email == request.resource.data.email.lower()
+        && grantId == request.resource.data.businessId + '__' + request.resource.data.email
+        && request.resource.data.role in ['owner','manager','cashier','inventory','delivery']
+      );
+
+      allow update: if isAdmin() || (
+        ownsBusiness(resource.data.businessId)
+        && request.resource.data.businessId == resource.data.businessId
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role in ['owner','manager','cashier','inventory','delivery']
+      );
+
       allow delete: if isAdmin() || ownsBusiness(resource.data.businessId);
     }
 
