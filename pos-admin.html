@@ -1394,6 +1394,17 @@ function pgStoreSettings(){
                 so the receipt cannot show a change figure.</div></span>
             <input type="checkbox" ${s.fastCash?'checked':''} style="width:18px;height:18px;accent-color:var(--accent)"
               onchange="setShopSetting('fastCash',this.checked)"></label>
+
+          <label style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;cursor:pointer;
+                        margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+            <span><b style="font-size:13.5px">Barcode scanner at this counter</b>
+              <div style="font-size:12px;color:var(--ink-3);line-height:1.5;margin-top:2px">
+                A scanned code adds one straight to the cart, with no quantity box —
+                twenty scans, twenty items.<br>
+                <b>Leave this off if codes are typed by hand</b>: typing a code and getting no
+                quantity box looks like the key did nothing. Weighed items always ask, either way.</div></span>
+            <input type="checkbox" ${s.scanAddsOne?'checked':''} style="width:18px;height:18px;accent-color:var(--accent)"
+              onchange="setShopSetting('scanAddsOne',this.checked)"></label>
         </div></div>
 
         <div class="card" style="margin-top:13px"><div class="card-hd"><h3>Tax</h3></div><div class="card-b">

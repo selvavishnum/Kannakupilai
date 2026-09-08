@@ -884,7 +884,7 @@ function loadDB(){
   DB.customers=DB.customers||[];
   DB.suppliers=DB.suppliers||[];
   DB.settings=Object.assign({gstOn:false,gstRate:5,openingCash:2000,expenses:0,vpa:'',seq:1,catalogManaged:false,
-    printLang:'both',fastCash:false,store:'',address:'',phone:'',gstin:''},DB.settings||{});
+    printLang:'both',fastCash:false,scanAddsOne:false,store:'',address:'',phone:'',gstin:''},DB.settings||{});
   DB.session=DB.session||null;
   saveDB();
 }
@@ -1314,6 +1314,7 @@ function applyCatalog(cat,live){
   if('gstOn' in s)     DB.settings.gstOn=!!s.gstOn;
   if('gstRate' in s)   DB.settings.gstRate=+s.gstRate||0;
   if('fastCash' in s)  DB.settings.fastCash=!!s.fastCash;
+  if('scanAddsOne' in s) DB.settings.scanAddsOne=!!s.scanAddsOne;
   if(s.vpa)       DB.settings.vpa=s.vpa;
   if(s.printLang) DB.settings.printLang=s.printLang;
   // Receipt header is per shop — five of six shops are not in Thuckalay.
@@ -1501,7 +1502,13 @@ let _qtyProduct=null;
 const WEIGHED=['kg','g','l','ml'];
 function addOne(p){
   if(!p) return;
-  if(WEIGHED.includes(p.unit)) return addToCart(p.id);
+  /* ASKING IS THE DEFAULT. Skipping the quantity box only makes sense with a
+     barcode scanner, where the code and the Enter arrive together and mean
+     "one of these". A cashier TYPING a code has already decided they want
+     the item and is about to say how much — taking that box away from them
+     silently adds one and looks like the key did nothing. So the shop opts
+     in, and even then only for units that are counted rather than weighed. */
+  if(!DB.settings.scanAddsOne||WEIGHED.includes(p.unit)) return addToCart(p.id);
   const c=cart(), net=+p.price||0;
   const ex=c.items.find(i=>i.pid===p.id&&i.rate===net);
   if(ex) ex.qty=+(ex.qty+1).toFixed(3);
