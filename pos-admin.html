@@ -110,6 +110,15 @@ textarea.inp{height:auto;padding:8px 10px;min-height:64px;resize:vertical}
 .seg{display:inline-flex;background:var(--line-2);border-radius:8px;padding:2px;gap:2px;flex-wrap:wrap}
 .seg button{height:28px;padding:0 11px;border:0;border-radius:6px;background:transparent;font-size:12px;font-weight:600;color:var(--ink-2)}
 .seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.pos-fab{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  height:38px;min-width:38px;padding:0 14px;border-radius:19px;text-decoration:none;
+  background:var(--accent);color:#fff;font-size:12.5px;font-weight:700;letter-spacing:.02em;
+  box-shadow:0 1px 3px rgba(0,0,0,.16);flex-shrink:0}
+.pos-fab:hover{filter:brightness(1.07)}
+.pos-fab svg{width:16px;height:16px}
+/* On a phone the label goes and it becomes a circle — the corner is worth
+   more than the word. */
+@media(max-width:560px){ .pos-fab{padding:0;width:38px} .pos-fab span{display:none} }
 .pill{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;background:var(--line-2);color:var(--ink-2);white-space:nowrap}
 .pill.ok{background:var(--accent-soft);color:var(--accent)}
 .pill.bad{background:var(--danger-soft);color:var(--danger)}
@@ -195,26 +204,86 @@ textarea.inp{height:auto;padding:8px 10px;min-height:64px;resize:vertical}
      lock, so this is the same Firebase account as the till and the ledger —
      and the Firestore rules, not this screen, are what actually keep one
      business out of another's data. -->
-<div id="lock" style="position:fixed;inset:0;z-index:100;background:var(--page);display:flex;align-items:center;justify-content:center;padding:20px">
-  <div style="background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:30px;width:100%;max-width:360px">
+<div id="lock" style="position:fixed;inset:0;z-index:100;background:var(--page);display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto">
+  <div style="background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:30px;width:100%;max-width:380px;margin:auto">
     <div style="display:flex;align-items:center;gap:11px;margin-bottom:20px">
       <div style="width:40px;height:40px;border-radius:10px;background:var(--accent);display:grid;place-items:center;font-size:19px">🥬</div>
       <div><b style="display:block;font-size:15px;font-weight:700;line-height:1.25">ArthaNote back office</b>
         <span id="lock-sub" style="display:block;font-size:11.5px;color:var(--ink-3)">Owner or manager sign-in</span></div>
     </div>
-    <label class="fl" for="lock-email">Email</label>
+
+    <!-- Google first, because it is one tap and there is no password to
+         forget. signInWithPopup ONLY — signInWithRedirect clears
+         sessionStorage on Android Chrome and loses the sign-in mid-flight,
+         which is a bug this project has already been bitten by once. -->
+    <button class="btn" id="g-btn" style="width:100%;height:46px;font-size:14px;gap:10px" onclick="signInGoogle()">
+      <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45 24c0-1.6-.1-2.7-.4-3.9H24v7.1h12c-.2 1.8-1.5 4.6-4.4 6.5l6.7 5.2C42.2 35.2 45 30.1 45 24z"/><path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.3l-6.9-5.4c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.8-3.8-12.5-9.1l-7.1 5.5C8 41.1 15.4 46 24 46z"/><path fill="#FBBC05" d="M11.5 28.4c-.5-1.3-.7-2.8-.7-4.4s.3-3.1.7-4.4l-7.1-5.6C2.9 16.9 2 20.3 2 24s.9 7.1 2.4 10l7.1-5.6z"/><path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.4 29.9 2 24 2 15.4 2 8 6.9 4.4 14l7.1 5.6c1.7-5.3 6.7-9 12.5-9z"/></svg>
+      <span id="g-txt">Continue with Google</span>
+    </button>
+
+    <div style="display:flex;align-items:center;gap:10px;margin:15px 0 13px;color:var(--ink-3);font-size:11.5px">
+      <span style="flex:1;height:1px;background:var(--line)"></span>or<span style="flex:1;height:1px;background:var(--line)"></span>
+    </div>
+
+    <div style="display:flex;gap:6px;margin-bottom:14px;background:var(--page);padding:4px;border-radius:9px">
+      <button class="btn" id="tab-in" style="flex:1;border:0;background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.06)"
+        onclick="setAuthMode('in')">Sign in</button>
+      <button class="btn" id="tab-up" style="flex:1;border:0;background:transparent"
+        onclick="setAuthMode('up')">Create account</button>
+    </div>
+
+    <div id="up-name-fg" style="display:none">
+      <label class="fl" for="lock-name">Your name</label>
+      <input id="lock-name" class="inp" autocomplete="name" placeholder="Shop owner's name">
+    </div>
+    <label class="fl" for="lock-email" style="margin-top:11px">Email</label>
     <input id="lock-email" class="inp" type="email" autocomplete="username" placeholder="you@shop.com"
       onkeydown="if(event.key==='Enter')document.getElementById('lock-pass').focus()">
     <label class="fl" for="lock-pass" style="margin-top:11px">Password</label>
     <input id="lock-pass" class="inp" type="password" autocomplete="current-password"
-      onkeydown="if(event.key==='Enter')signInAdmin()">
+      onkeydown="if(event.key==='Enter')submitAuth()">
+    <p id="up-hint" style="display:none;font-size:11.5px;color:var(--ink-3);margin:5px 0 0">At least 6 characters.</p>
+
     <p style="font-size:12px;color:var(--ink-3);margin:9px 0 0;line-height:1.5">
       Same account as the till. The back office shows cost, margin and payroll — do not open it at the counter.
     </p>
     <div id="lock-err" style="display:none;font-size:12.5px;color:var(--danger);font-weight:500;margin-top:10px"></div>
-    <button class="btn btn-p" id="lock-btn" style="width:100%;height:46px;font-size:14px;margin-top:16px" onclick="signInAdmin()">Sign in</button>
+    <button class="btn btn-p" id="lock-btn" style="width:100%;height:46px;font-size:14px;margin-top:16px" onclick="submitAuth()">Sign in</button>
     <button class="btn" style="width:100%;margin-top:9px" onclick="startAdminDemo()">Explore with demo data</button>
     <a href="pos.html" class="btn" style="width:100%;margin-top:9px;text-decoration:none">← Back to billing</a>
+  </div>
+</div>
+
+<!-- First run. Two questions, then the dashboard — a new shop should be
+     billing within a minute, not filling in a settings form. -->
+<div id="onboard" style="display:none;position:fixed;inset:0;z-index:99;background:var(--page);padding:24px 20px;overflow:auto">
+  <div style="max-width:640px;margin:0 auto">
+    <div style="display:flex;align-items:center;gap:11px;margin-bottom:6px">
+      <div style="width:38px;height:38px;border-radius:10px;background:var(--accent);display:grid;place-items:center;font-size:18px">🥬</div>
+      <div><b style="display:block;font-size:16px;font-weight:700">Set up your shop</b>
+        <span id="ob-who" style="display:block;font-size:12px;color:var(--ink-3)"></span></div>
+      <button class="btn" style="margin-left:auto" onclick="signOutAdmin()">Sign out</button>
+    </div>
+
+    <div id="ob-1">
+      <h2 style="font-size:15px;font-weight:700;margin:22px 0 4px">What kind of shop is it?</h2>
+      <p style="font-size:12.5px;color:var(--ink-3);margin:0 0 14px">
+        This sets the categories and the reports. You can change it later.</p>
+      <div id="ob-types" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:9px"></div>
+    </div>
+
+    <div id="ob-2" style="display:none">
+      <h2 style="font-size:15px;font-weight:700;margin:22px 0 4px">What is the shop called?</h2>
+      <p style="font-size:12.5px;color:var(--ink-3);margin:0 0 14px">
+        This is what prints at the top of every bill. <span id="ob-picked"></span></p>
+      <input id="ob-name" class="inp" style="height:50px;font-size:16px;max-width:420px" placeholder="e.g. Tulasi Vegetables, Thuckalay"
+        onkeydown="if(event.key==='Enter')finishOnboarding()">
+      <div id="ob-err" style="display:none;font-size:12.5px;color:var(--danger);font-weight:500;margin-top:10px"></div>
+      <div style="display:flex;gap:9px;margin-top:16px">
+        <button class="btn" onclick="obStep(1)">← Back</button>
+        <button class="btn btn-p" id="ob-go" style="height:44px;padding:0 20px" onclick="finishOnboarding()">Create shop</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -243,6 +312,11 @@ textarea.inp{height:auto;padding:8px 10px;min-height:64px;resize:vertical}
       <div style="margin-left:auto;display:flex;align-items:center;gap:9px;flex-shrink:0">
         <span class="pill ok" id="src-pill">demo</span>
         <span style="font-size:12.5px;font-weight:600" class="tnum" id="today"></span>
+        <!-- The counter is the thing people actually need from here, and it
+             was buried at the bottom of a sidebar that is collapsed on a
+             phone. One tap, always in the same corner. -->
+        <a href="pos.html" class="pos-fab" title="Open the billing counter" aria-label="Open billing">
+          <i data-i="calculator"></i><span>POS</span></a>
       </div>
     </header>
     <div class="body scroll"><div class="wrap" id="view"></div></div>
@@ -2148,25 +2222,103 @@ const catKey=x=>String(x||'').replace(/[.$\[\]#\/]/g,'_').slice(0,60);
 /* Shops this page may act on: one when the subdomain fixed it, all otherwise */
 const inScope=()=>ME?(ME.scope?[ME.scope]:Object.keys(ME.shops)):[];
 
+let authMode='in';
+function setAuthMode(m){
+  authMode=m;
+  const on='flex:1;border:0;background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.06)';
+  const off='flex:1;border:0;background:transparent';
+  document.getElementById('tab-in').setAttribute('style',m==='in'?on:off);
+  document.getElementById('tab-up').setAttribute('style',m==='up'?on:off);
+  document.getElementById('up-name-fg').style.display=m==='up'?'':'none';
+  document.getElementById('up-hint').style.display=m==='up'?'':'none';
+  document.getElementById('lock-pass').setAttribute('autocomplete',m==='up'?'new-password':'current-password');
+  document.getElementById('lock-btn').textContent=m==='up'?'Create account':'Sign in';
+  document.getElementById('lock-err').style.display='none';
+}
+function authErr(msg){
+  const el=document.getElementById('lock-err');
+  el.textContent=msg; el.style.display='block';
+}
+/* One place that turns a Firebase auth code into something a shop owner can
+   act on. The default messages are written for developers. */
+function authMessage(e){
+  const c=e&&e.code;
+  return ({
+    'auth/wrong-password':'Wrong password.',
+    'auth/invalid-credential':'That email and password do not match an account.',
+    'auth/user-not-found':'No account with that email — use “Create account” instead.',
+    'auth/invalid-email':'That email address is not valid.',
+    'auth/email-already-in-use':'An account already exists for that email — use “Sign in” instead.',
+    'auth/weak-password':'Password is too short — use at least 6 characters.',
+    'auth/too-many-requests':'Too many attempts — wait a minute and try again.',
+    'auth/network-request-failed':'No connection. Try again when you are online.',
+    'auth/popup-closed-by-user':'The Google window was closed before sign-in finished.',
+    'auth/cancelled-popup-request':'',
+    'auth/popup-blocked':'Your browser blocked the Google window. Allow pop-ups for this site, or sign in with a password below.',
+    'auth/unauthorized-domain':'This web address is not authorised for Google sign-in yet. Add it in Firebase Console → Authentication → Settings → Authorised domains.',
+    'auth/operation-not-allowed':'Google sign-in is not switched on for this project yet. Firebase Console → Authentication → Sign-in method → Google → Enable.',
+    // The documented trap: the email already has a PASSWORD account, so
+    // Google will not silently take it over. Say what to do about it.
+    'auth/account-exists-with-different-credential':
+      'That email already has a password account here. Sign in with the password below — after that, Google will work for it too.',
+  })[c] ?? ('Sign-in failed: '+((e&&e.message)||c||'unknown error'));
+}
+function submitAuth(){ authMode==='up'?signUpAdmin():signInAdmin(); }
+
+function signInGoogle(){
+  const btn=document.getElementById('g-btn'), txt=document.getElementById('g-txt');
+  document.getElementById('lock-err').style.display='none';
+  if(!FB_OK) return authErr('Cannot reach Firebase from this device. Explore the demo, or check the connection.');
+  btn.disabled=true; txt.textContent='Opening Google…';
+  const prov=new firebase.auth.GoogleAuthProvider();
+  prov.setCustomParameters({prompt:'select_account'});   // never silently reuse the wrong Google account
+  AUTH.signInWithPopup(prov)
+    .then(cred=>resolveMe(cred.user))
+    .then(afterAuth)
+    .catch(e=>{ const m=authMessage(e); if(m) authErr(m); })
+    .finally(()=>{ btn.disabled=false; txt.textContent='Continue with Google'; });
+}
+
 function signInAdmin(){
-  const err=document.getElementById('lock-err'), btn=document.getElementById('lock-btn');
+  const btn=document.getElementById('lock-btn');
   const email=(document.getElementById('lock-email').value||'').trim();
   const pass=document.getElementById('lock-pass').value;
-  err.style.display='none';
-  if(!email||!pass){ err.textContent='Enter your email and password.'; err.style.display='block'; return; }
-  if(!FB_OK){ err.textContent='Cannot reach Firebase from this device. Explore the demo, or check the connection.'; err.style.display='block'; return; }
+  document.getElementById('lock-err').style.display='none';
+  if(!email||!pass) return authErr('Enter your email and password.');
+  if(!FB_OK) return authErr('Cannot reach Firebase from this device. Explore the demo, or check the connection.');
   btn.disabled=true; btn.textContent='Signing in…';
   AUTH.signInWithEmailAndPassword(email,pass)
     .then(cred=>resolveMe(cred.user))
-    .then(()=>{ document.getElementById('lock').style.display='none'; bootAdmin(); })
-    .catch(e=>{
-      const m=({'auth/wrong-password':'Wrong password.','auth/user-not-found':'No account with that email.',
-        'auth/invalid-email':'That email address is not valid.','auth/too-many-requests':'Too many attempts — wait a minute.',
-        'auth/network-request-failed':'No connection. Try again when you are online.'})[e.code]
-        ||('Sign-in failed: '+(e.message||e.code));
-      err.textContent=m; err.style.display='block';
-    })
+    .then(afterAuth)
+    .catch(e=>authErr(authMessage(e)))
     .finally(()=>{ btn.disabled=false; btn.textContent='Sign in'; });
+}
+
+function signUpAdmin(){
+  const btn=document.getElementById('lock-btn');
+  const name=(document.getElementById('lock-name').value||'').trim();
+  const email=(document.getElementById('lock-email').value||'').trim();
+  const pass=document.getElementById('lock-pass').value;
+  document.getElementById('lock-err').style.display='none';
+  if(!name)  return authErr('Enter your name.');
+  if(!email) return authErr('Enter an email address.');
+  if((pass||'').length<6) return authErr('Password must be at least 6 characters.');
+  if(!FB_OK) return authErr('Cannot reach Firebase from this device.');
+  btn.disabled=true; btn.textContent='Creating…';
+  AUTH.createUserWithEmailAndPassword(email,pass)
+    .then(cred=>cred.user.updateProfile({displayName:name}).catch(()=>{}).then(()=>resolveMe(cred.user)))
+    .then(afterAuth)
+    .catch(e=>authErr(authMessage(e)))
+    .finally(()=>{ btn.disabled=false; btn.textContent=authMode==='up'?'Create account':'Sign in'; });
+}
+
+/* Where every successful sign-in lands: a shop with no shops set up goes to
+   onboarding, everyone else straight to the dashboard. */
+function afterAuth(){
+  document.getElementById('lock').style.display='none';
+  if(ME&&ME.isNew) return startOnboarding();
+  document.getElementById('onboard').style.display='none';
+  bootAdmin();
 }
 function resolveMe(user){
   return FS.collection('staff').doc(user.uid).get()
@@ -2178,7 +2330,11 @@ function resolveMe(user){
       .then(c=>{ me.shops=(c.exists&&c.data().shops)||{}; return me; })
       .catch(()=>{ me.shops={}; return me; }))
     .then(me=>{
-      if(!Object.keys(me.shops).length) me.shops={s1:{name:'Main shop'}};
+      /* No shops on the config document means nobody has set this account up
+         yet. Inventing a "Main shop" here would silently skip onboarding and
+         leave the owner with a shop they never named, so say so instead. */
+      me.isNew=!Object.keys(me.shops).length;
+      if(me.isNew){ ME=me; DEMO_ADMIN=false; clearDemoData(); return; }
       const bound=matchShopBySlug(me.shops,SHOP_SLUG);
       me.scope=bound||''; me.locked=!!bound;
       ME=me; DEMO_ADMIN=false;
@@ -2187,8 +2343,97 @@ function resolveMe(user){
       return loadCatalogs().then(loadLiveRollups);
     });
 }
+/* ══════════════ FIRST RUN ══════════════════════════════════════════════
+   Two questions and then the dashboard. The shop types are the SAME list
+   the ledger app uses, so an account set up here and one set up there are
+   indistinguishable afterwards — the same bizType drives the same
+   categories and the same reports in both. */
+const BIZ_TYPES=[
+  ['vegetables','🥬','Vegetables'],['grocery','🛒','Grocery'],['tea','☕','Tea shop'],
+  ['bakery','🍞','Bakery'],['hotel','🍽️','Hotel / Mess'],['textile','👕','Textile'],
+  ['jewellery','💍','Jewellery'],['hardware','🔧','Hardware'],['medical','💊','Medical'],
+  ['finance','💰','Finance'],['chit','🎰','Chit fund'],['construction','🏗️','Construction'],
+  ['personal','👤','Personal'],['other','🏪','Other'],
+];
+let _obType='';
+function startOnboarding(){
+  document.getElementById('lock').style.display='none';
+  document.getElementById('onboard').style.display='block';
+  document.getElementById('ob-who').textContent=(ME&&(ME.email||ME.name))||'';
+  document.getElementById('ob-types').innerHTML=BIZ_TYPES.map(([k,ic,label])=>
+    `<button class="btn ob-type" data-k="${k}" onclick="pickType('${k}')"
+       style="flex-direction:column;height:auto;padding:15px 8px;gap:6px;line-height:1.3">
+       <span style="font-size:26px">${ic}</span>
+       <span style="font-size:12.5px;font-weight:600;text-align:center">${label}</span></button>`).join('');
+  _obType=''; obStep(1);
+}
+function obStep(n){
+  document.getElementById('ob-1').style.display=n===1?'':'none';
+  document.getElementById('ob-2').style.display=n===2?'':'none';
+  document.getElementById('ob-err').style.display='none';
+  if(n===2) setTimeout(()=>document.getElementById('ob-name').focus(),60);
+}
+function pickType(k){
+  _obType=k;
+  const t=BIZ_TYPES.find(x=>x[0]===k);
+  document.getElementById('ob-picked').textContent=t?('You picked '+t[1]+' '+t[2]+'.'):'';
+  obStep(2);
+}
+/* Writes the two documents a business is made of. Both are keyed by the
+   owner's own uid, which is what `ownsBusiness()` matches on before any
+   staff document exists — so this works on the very first sign-in. */
+function finishOnboarding(){
+  const name=(document.getElementById('ob-name').value||'').trim();
+  const err=document.getElementById('ob-err'), btn=document.getElementById('ob-go');
+  err.style.display='none';
+  if(!name){ err.textContent='Give the shop a name.'; err.style.display='block';
+             document.getElementById('ob-name').focus(); return; }
+  if(!ME||!FB_OK){ err.textContent='Cannot reach Firebase from this device.'; err.style.display='block'; return; }
+  const t=BIZ_TYPES.find(x=>x[0]===_obType)||BIZ_TYPES[BIZ_TYPES.length-1];
+  const bid=ME.businessId;
+  const shops={s1:{name:name,icon:t[1],type:t[0],slug:slugify(name)}};
+  btn.disabled=true; btn.textContent='Creating…';
+
+  // The staff document is what every other screen resolves businessId from.
+  Promise.all([
+    FS.collection('staff').doc(ME.uid).set({
+      uid:ME.uid, businessId:bid, name:ME.name||name, email:ME.email||'',
+      role:'owner', bizType:t[0],
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true}),
+    FS.collection('config').doc(bid).set({
+      businessId:bid, bizType:t[0], onboarded:true, shops:shops,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true}),
+  ])
+    .then(()=>{
+      /* The shop EXISTS from here on. Everything below is loading, and a
+         read that fails must never be reported as a creation failure —
+         doing so left a new owner stranded on this screen, pressing Create
+         again on a shop that had already been created. */
+      ME.shops=shops; ME.isNew=false;
+      const bound=matchShopBySlug(shops,SHOP_SLUG);
+      ME.scope=bound||'s1'; ME.locked=!!bound;
+      document.getElementById('onboard').style.display='none';
+      bootAdmin();
+      toast(name+' is ready — add your products, then start billing');
+      go('prod-inv');
+      // Best effort, and silent: a brand-new shop has nothing to load yet.
+      Promise.resolve()
+        .then(loadCatalogs).then(loadLiveRollups)
+        .then(()=>{ if(page==='prod-inv') go('prod-inv'); })
+        .catch(e=>console.warn('first load after onboarding:',e&&e.message));
+    })
+    .catch(e=>{
+      err.textContent='Could not create the shop: '+((e&&e.message)||'unknown error');
+      err.style.display='block';
+    })
+    .finally(()=>{ btn.disabled=false; btn.textContent='Create shop'; });
+}
+
 function startAdminDemo(){
   DEMO_ADMIN=true;
+  document.getElementById('onboard').style.display='none';
   DB=seedDB(); DB._demo=true; save();     // sample rows exist ONLY here
   ROLL={}; try{ localStorage.removeItem(LS_ROLL); }catch(e){}
   loadRollups();
@@ -2240,6 +2485,7 @@ function loadLiveRollups(){
 }
 function signOutAdmin(){
   if(FB_OK&&AUTH.currentUser) AUTH.signOut().catch(()=>{});
+  try{ document.getElementById('onboard').style.display='none'; }catch(e){}
   location.reload();
 }
 
@@ -2336,13 +2582,14 @@ load();
 document.getElementById('today').textContent=new Date().toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
 icons();
 if(SHOP_SLUG) document.getElementById('lock-sub').textContent='Back office for '+SHOP_SLUG;
+setAuthMode('in');
 /* A signed-in session is restored rather than re-typed. onAuthStateChanged
    also fires with null on first load when nobody is signed in, which is what
    leaves the sign-in card up. */
 if(FB_OK){
   AUTH.onAuthStateChanged(u=>{
     if(!u||ME||DEMO_ADMIN) { if(!u&&!DEMO_ADMIN) document.getElementById('lock-email').focus(); return; }
-    resolveMe(u).then(()=>{ document.getElementById('lock').style.display='none'; bootAdmin(); })
+    resolveMe(u).then(afterAuth)
       .catch(e=>console.warn('could not restore session:',e&&e.message));
   });
 }else{

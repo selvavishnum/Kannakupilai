@@ -464,6 +464,13 @@ table.d tr.click:hover td{background:var(--raised)}
       </div>
       <div id="otp-err"></div>
       <button class="btn btn-p" style="width:100%;height:46px;font-size:14px" id="li-btn" onclick="signIn()">Sign in</button>
+      <div style="display:flex;align-items:center;gap:10px;margin:13px 0 11px;color:var(--ink-3);font-size:11.5px">
+        <span style="flex:1;height:1px;background:var(--line)"></span>or<span style="flex:1;height:1px;background:var(--line)"></span>
+      </div>
+      <button class="btn" id="g-btn" style="width:100%;height:44px;font-size:13.5px;gap:9px" onclick="signInGoogle()">
+        <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45 24c0-1.6-.1-2.7-.4-3.9H24v7.1h12c-.2 1.8-1.5 4.6-4.4 6.5l6.7 5.2C42.2 35.2 45 30.1 45 24z"/><path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.3l-6.9-5.4c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.8-3.8-12.5-9.1l-7.1 5.5C8 41.1 15.4 46 24 46z"/><path fill="#FBBC05" d="M11.5 28.4c-.5-1.3-.7-2.8-.7-4.4s.3-3.1.7-4.4l-7.1-5.6C2.9 16.9 2 20.3 2 24s.9 7.1 2.4 10l7.1-5.6z"/><path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.4 29.9 2 24 2 15.4 2 8 6.9 4.4 14l7.1 5.6c1.7-5.3 6.7-9 12.5-9z"/></svg>
+        <span id="g-txt">Continue with Google</span>
+      </button>
       <p class="hint" style="margin-top:14px;text-align:center">
         Same login as your ArthaNote ledger.<br>
         <button onclick="startDemo()" style="color:var(--accent);font-weight:600;text-decoration:underline;padding:0;margin-top:5px">Try the demo instead</button>
@@ -1013,6 +1020,33 @@ function signIn(){
     })
     .finally(()=>{ btn.disabled=false; btn.textContent='Sign in'; });
 }
+/* Popup, never redirect. signInWithRedirect wipes sessionStorage on Android
+   Chrome and loses the sign-in half-way through — a bug this project has
+   already been bitten by once and should not repeat at a counter. */
+function signInGoogle(){
+  const err=document.getElementById('otp-err'), btn=document.getElementById('g-btn'), txt=document.getElementById('g-txt');
+  err.style.display='none';
+  if(!FB_OK){ err.textContent='Cannot reach Firebase from this device. Use the demo, or check the connection.'; err.style.display='block'; return; }
+  btn.disabled=true; txt.textContent='Opening Google…';
+  const prov=new firebase.auth.GoogleAuthProvider();
+  prov.setCustomParameters({prompt:'select_account'});
+  AUTH.signInWithPopup(prov)
+    .then(cred=>resolveIdentity(cred.user))
+    .catch(e=>{
+      const m=({'auth/popup-closed-by-user':'The Google window was closed before sign-in finished.',
+        'auth/cancelled-popup-request':'',
+        'auth/popup-blocked':'Your browser blocked the Google window. Allow pop-ups for this site, or use the password above.',
+        'auth/unauthorized-domain':'This address is not authorised for Google sign-in yet.',
+        'auth/operation-not-allowed':'Google sign-in is not switched on for this project yet.',
+        'auth/account-exists-with-different-credential':
+          'That email already has a password account here — sign in with the password above.',
+        'auth/network-request-failed':'No connection. Try again when you are online.'})[e.code]
+        ??('Google sign-in failed: '+(e.message||e.code));
+      if(m){ err.textContent=m; err.style.display='block'; }
+    })
+    .finally(()=>{ btn.disabled=false; txt.textContent='Continue with Google'; });
+}
+
 /* businessId comes from the signed-in user's staff doc — the same resolution
    the ledger app uses, so POS bills land under the same business. */
 function resolveIdentity(user){
@@ -1032,9 +1066,20 @@ function askShop(me,shops){
   _pendingMe=me;
   const sel=document.getElementById('li-shop');
   const entries=Object.entries(shops);
-  sel.innerHTML=entries.length
-    ? entries.map(([id,s])=>`<option value="${esc(id)}">${esc(s.name||id)}</option>`).join('')
-    : '<option value="s1">Main counter</option>';
+  /* An account with no shops has not been set up yet. Offering a made-up
+     "Main counter" would let a cashier bill into a shop that does not exist
+     in the back office, and the catalog would never arrive. */
+  if(!entries.length){
+    document.getElementById('login-step').classList.remove('hidden');
+    document.getElementById('shop-step').classList.add('hidden');
+    const err=document.getElementById('otp-err');
+    err.innerHTML='No shop is set up on this account yet. Open the '
+      +'<a href="pos-admin.html" style="color:var(--accent);font-weight:600">back office</a> and set one up first.';
+    err.style.display='block';
+    if(FB_OK&&AUTH.currentUser) AUTH.signOut().catch(()=>{});
+    return;
+  }
+  sel.innerHTML=entries.map(([id,s])=>`<option value="${esc(id)}">${esc(s.name||id)}</option>`).join('');
   const prev=IDENT&&IDENT.businessId===me.businessId?IDENT:null;
   if(prev&&entries.some(([id])=>id===prev.shopId)) sel.value=prev.shopId;
 
