@@ -659,6 +659,80 @@ function synthRollup(d,dt){
     items[p[0]]={name:p[1],qty:q,amt:+(q*p[6]).toFixed(2)}; });
   return {date:d,bills,sales,cash,upi:+(sales-cash-card).toFixed(2),card,items,synth:true};
 }
+/* ══════════════ DATE RANGE ══════════════════════════════════════════════
+   One range, shared by the dashboard, the nightly check and the reports —
+   so "30 days" means the same thirty days on all three, and switching
+   screens does not silently change the window you are reading.
+
+   `mode` is what the buttons show; from/to are what everything computes on,
+   because a custom range has no day-count and "this month" changes length
+   on the 1st. Deriving the dates once, here, keeps every screen honest. */
+const RANGE={mode:'30', from:'', to:''};
+const dayShift=(d,n)=>{ const x=new Date(d+'T00:00:00'); x.setDate(x.getDate()+n); return iso(x); };
+
+function rangeDates(){
+  const today=iso(new Date());
+  switch(RANGE.mode){
+    case 'today':  return {from:today, to:today, label:'Today'};
+    case 'yest':   { const y=dayShift(today,-1); return {from:y, to:y, label:'Yesterday'}; }
+    case '7':      return {from:dayShift(today,-6),  to:today, label:'Last 7 days'};
+    case '30':     return {from:dayShift(today,-29), to:today, label:'Last 30 days'};
+    case 'month':  { const d=new Date(); const first=iso(new Date(d.getFullYear(),d.getMonth(),1));
+                     return {from:first, to:today,
+                             label:d.toLocaleDateString('en-IN',{month:'long',year:'numeric'})}; }
+    case 'custom': {
+      let f=RANGE.from||today, t=RANGE.to||today;
+      if(f>t){ const x=f; f=t; t=x; }          // a backwards range is a typo, not a request
+      return {from:f, to:t, label:dshort(f)+' – '+dshort(t)};
+    }
+  }
+  return {from:dayShift(today,-29), to:today, label:'Last 30 days'};
+}
+const rangeDays=()=>{ const r=rangeDates();
+  return Math.round((new Date(r.to+'T00:00:00')-new Date(r.from+'T00:00:00'))/86400000)+1; };
+
+/* The control itself. `after` is what to re-run once the range changes —
+   every screen passes its own renderer, so there is one control and no
+   copies of its markup to fall out of step. */
+function rangeBar(after){
+  const r=rangeDates(), today=iso(new Date());
+  const btn=(m,l)=>`<button class="${RANGE.mode===m?'on':''}" onclick="setRange('${m}','${after}')">${l}</button>`;
+  return `<div class="seg">
+      ${btn('today','Today')}${btn('yest','Yesterday')}${btn('7','7 days')}
+      ${btn('30','30 days')}${btn('month','This month')}${btn('custom','Custom')}
+    </div>
+    ${RANGE.mode==='custom'?`
+    <div style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2)">
+      <input class="inp" type="date" style="height:32px;width:auto;padding:0 8px" max="${today}"
+        value="${esc(RANGE.from||r.from)}" onchange="RANGE.from=this.value;${after}()">
+      <span>to</span>
+      <input class="inp" type="date" style="height:32px;width:auto;padding:0 8px" max="${today}"
+        value="${esc(RANGE.to||r.to)}" onchange="RANGE.to=this.value;${after}()">
+    </div>`:`<span style="font-size:12.5px;color:var(--ink-3)">${esc(r.label)}</span>`}`;
+}
+function setRange(mode,after){
+  RANGE.mode=mode;
+  if(mode==='custom'&&!RANGE.from){                 // seed it with something sane
+    const r=rangeDates(); RANGE.from=dayShift(iso(new Date()),-6); RANGE.to=r.to||iso(new Date());
+  }
+  const fn=window[after];
+  // A window that reaches further back than what is loaded needs a read
+  // first, or the screen would quietly report zeroes for real days.
+  Promise.resolve(ensureRollups()).then(()=>{ if(typeof fn==='function') fn(); });
+}
+
+/* Every row inside the current range, oldest first, with the days that have
+   no sales filled in as real zeroes — a gap in a chart is not the same as a
+   day the shop took nothing. */
+function rollupWindow(){
+  const {from,to}=rangeDates(), out=[];
+  for(let d=from; d<=to; d=dayShift(d,1)){
+    out.push(ROLL[d]||{date:d,bills:0,sales:0,cash:0,upi:0,card:0,items:{},synth:!!DB._demo});
+    if(out.length>800) break;                      // a mistyped year is not a query
+  }
+  return out;
+}
+// Kept for the demo book, which still thinks in "last N days".
 function rollupRange(days){
   const out=[];
   for(let i=days-1;i>=0;i--){ const dt=new Date(); dt.setDate(dt.getDate()-i); const d=iso(dt);
@@ -1005,16 +1079,17 @@ const REPORTS=[
  ['r15','15. Product — Price List',       repPriceList],
 ];
 function pgReports(){
-  const rows=rollupRange(range);
+  const rows=(DEMO_ADMIN?rollupRange(range):rollupWindow());
+  const rd=rangeDates();
   const bills=rows.reduce((a,r)=>a+r.bills,0);
-  sub(range+'-day window · '+rows.length+' rollup reads');
+  sub(scopeLabel()+' · '+rd.label+' · '+rows.length+' rollup reads');
   const rep=REPORTS.find(r=>r[0]===reportKey)||REPORTS[0];
   const out=rep[2](rows);
   V(`<div class="toolbar">
       <select class="inp" style="max-width:340px" onchange="reportKey=this.value;pgReports();icons(document.getElementById('view'))">
         ${REPORTS.map(r=>`<option value="${r[0]}" ${r[0]===reportKey?'selected':''}>${esc(r[1])}</option>`).join('')}
       </select>
-      <div class="seg">${[7,30,60,90].map(d=>`<button class="${range===d?'on':''}" onclick="range=${d};pgReports();icons(document.getElementById('view'))">${d}d</button>`).join('')}</div>
+      ${rangeBar('pgReports')}
       <button class="btn" style="margin-left:auto" onclick="exportReport()"><i data-i="download"></i>CSV</button>
     </div>
 
@@ -1213,31 +1288,37 @@ function repPriceList(){
    SPECIAL SCREENS
    ══════════════════════════════════════════════════════════════════════ */
 function pgDashboard(){
-  const r30=rollupRange(30), today=ROLL[iso(new Date())]||{bills:0,sales:0,cash:0,upi:0,card:0,items:{}};
+  /* Whatever range is selected, on whichever shop is in the header. Both are
+     named on the page beside the figures — a number whose window and shop
+     are not on screen with it is a number nobody can check. */
+  const r30=(DEMO_ADMIN?rollupRange(30):rollupWindow());
+  const rd=rangeDates();
+  const today=ROLL[iso(new Date())]||{bills:0,sales:0,cash:0,upi:0,card:0,items:{}};
   const sales30=r30.reduce((a,r)=>a+r.sales,0), bills30=r30.reduce((a,r)=>a+r.bills,0);
   const stockVal=productList().reduce((a,p)=>a+p.cost*p.stock,0);
   const drawer=DB.settings.openingCash+today.cash-DB.settings.expenses;
-  sub('Last 30 days · '+r30.length+' rollup documents read');
+  sub(scopeLabel()+' · '+rd.label+' · '+r30.length+' rollup documents read');
   const mix=[{k:'Cash',v:r30.reduce((a,r)=>a+r.cash,0),c:'var(--series-1)'},
              {k:'UPI', v:r30.reduce((a,r)=>a+r.upi,0), c:'var(--series-2)'},
              {k:'Card',v:r30.reduce((a,r)=>a+r.card,0),c:'var(--series-3)'}].map(x=>({...x,lab:money(x.v)}));
   const top=aggItems(r30).sort((a,b)=>b.amt-a.amt).slice(0,6).map(x=>({k:x.name,v:x.amt,lab:money(x.amt)}));
-  V(`<div class="grid g4" style="margin-bottom:13px">
-      ${kpiC('Sales today',money(today.sales),today.bills+' bills')}
-      ${kpiC('Avg bill (30d)',money(bills30?sales30/bills30:0),'across '+bills30+' bills')}
+  V(`<div class="toolbar">${rangeBar('pgDashboard')}</div>
+    <div class="grid g4" style="margin-bottom:13px">
+      ${kpiC(RANGE.mode==='today'?'Sales today':'Sales in range',money(RANGE.mode==='today'?today.sales:sales30),(RANGE.mode==='today'?today.bills:bills30)+' bills')}
+      ${kpiC('Avg bill',money(bills30?sales30/bills30:0),'across '+bills30+' bills · '+esc(rd.label))}
       ${kpiC('Cash in drawer',money(drawer),'opening '+money(DB.settings.openingCash))}
       ${kpiC('Open orders',DB.orders.filter(o=>o.stage!=='Closed'&&o.stage!=='Returns').length,'in the pipeline')}
     </div>
     <div class="card" style="margin-bottom:13px">
-      <div class="card-hd"><h3>Daily sales — last 30 days</h3><span class="note">from daily rollups · 30 reads</span></div>
+      <div class="card-hd"><h3>Daily sales — ${esc(rd.label)}</h3><span class="note">${esc(scopeLabel())} · ${r30.length} rollup reads</span></div>
       <div class="card-b">${barChart(r30,'sales',r=>new Date(r.date+'T00:00:00').toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'}),r=>money(r.sales)+' · '+r.bills+' bills')}</div>
     </div>
     <div class="grid g2" style="margin-bottom:13px">
-      <div class="card"><div class="card-hd"><h3>Payment mix — 30 days</h3></div>
+      <div class="card"><div class="card-hd"><h3>Payment mix — ${esc(rd.label)}</h3></div>
         <div class="card-b">${hBars(mix)}
           <div class="legend"><span><i style="background:var(--series-1)"></i>Cash</span><span><i style="background:var(--series-2)"></i>UPI</span><span><i style="background:var(--series-3)"></i>Card</span></div>
         </div></div>
-      <div class="card"><div class="card-hd"><h3>Top items — 30 days</h3></div>
+      <div class="card"><div class="card-hd"><h3>Top items — ${esc(rd.label)}</h3></div>
         <div class="card-b">${top.length?hBars(top):'<div class="empty">No sales yet</div>'}</div></div>
     </div>
     <div class="grid g2">
@@ -1409,7 +1490,7 @@ function exportBills(){
 
 function pgAccDash(){
   const today=ROLL[iso(new Date())]||{sales:0,cash:0,upi:0,card:0,bills:0};
-  const r30=rollupRange(30), sales30=r30.reduce((a,r)=>a+r.sales,0);
+  const r30=(DEMO_ADMIN?rollupRange(30):rollupWindow()), sales30=r30.reduce((a,r)=>a+r.sales,0);
   const exp30=DB.debits.reduce((a,d)=>a+d.amount,0);
   const closing=DB.settings.openingCash+today.cash-DB.settings.expenses;
   const ar=DB.ar.reduce((a,x)=>a+x.amount,0), ap=DB.ap.reduce((a,x)=>a+x.amount,0);
@@ -2117,34 +2198,48 @@ function saveGrid(){
 /* ── 3. Nightly check ───────────────────────────────────────────────
    "Every night, per shop: total sale, product-wise, category-wise."
    Straight off the rollups — one document per shop per day. */
-let nightDays=1, _night=null, _nightReq=0;
+/* The nightly check is the owner's cross-shop view — "what did each shop
+   take" — so it stays shop by shop whatever the header is set to, and only
+   a subdomain-locked back office narrows it to one. Everything else on this
+   screen follows the same shared range as the dashboard and the reports. */
+let _night=null, _nightReq=0;
 function pgNightly(){
   if(DEMO_ADMIN||!ME) return V(liveGate('The nightly check'));
-  sub(ME.locked?shopName(ME.scope):Object.keys(ME.shops).length+' shops · read from daily summaries, not from bills');
-  V(`<div class="toolbar">
-      ${[[1,'Today'],[2,'Yesterday too'],[7,'7 days'],[30,'30 days'],[90,'90 days']]
-        .map(([d,l])=>`<button class="btn ${nightDays===d?'btn-p':''}" onclick="nightDays=${d};pgNightly()">${l}</button>`).join('')}
+  const rd=rangeDates();
+  const ids=Object.keys(ME.shops||{});
+  sub((ME.locked?shopName(ME.scope):(ids.length+' shops'))
+      +' · '+rd.label+' · read from daily summaries, not from bills');
+  V(`<div class="toolbar">${rangeBar('pgNightly')}
       <button class="btn" style="margin-left:auto" onclick="exportNightly()"><i data-i="download"></i>CSV</button>
     </div><div id="night-body"><div class="card"><div class="empty">Reading…</div></div></div>`);
   icons(document.getElementById('view'));
   // 90 days takes longer to come back than Today. Without a token, clicking
   // 90 then Today paints the 90-day answer under the "Today" heading.
   const req=++_nightReq;
-  fetchRollups(nightDays)
-    .then(rows=>{ if(req!==_nightReq) return; _night=rows; drawNightly(rows); })
+  Promise.resolve(ensureRollups())
+    .then(()=>{
+      if(req!==_nightReq) return;
+      _night=rollupRowsInRange(ME.locked?(ME.scope||''):'');
+      drawNightly(_night);
+    })
     .catch(e=>{ if(req!==_nightReq) return;
       document.getElementById('night-body').innerHTML=
       `<div class="card"><div class="empty">Could not read the summaries: ${esc(e&&e.message||'unknown error')}</div></div>`; });
 }
 function drawNightly(rows){
   const el=document.getElementById('night-body'); if(!el) return;
-  if(!rows.length) return el.innerHTML='<div class="card"><div class="empty">No sales recorded in this period.</div></div>';
+  const rd=rangeDates();
+  if(!rows.length) return el.innerHTML=`<div class="card"><div class="empty">
+    No sales recorded in ${esc(rd.label.toLowerCase())}.<br>
+    <span style="font-size:12.5px">Try a wider range above — the buttons cover today through this month, or pick your own dates.</span>
+  </div></div>`;
   const tot=rows.reduce((a,r)=>({bills:a.bills+(r.bills||0),sales:a.sales+(r.sales||0),
     cash:a.cash+(r.cash||0),upi:a.upi+(r.upi||0),card:a.card+(r.card||0)}),{bills:0,sales:0,cash:0,upi:0,card:0});
   // Per shop
   const byShop={};
-  rows.forEach(r=>{ const s=byShop[r.shopId]=byShop[r.shopId]||{bills:0,sales:0,cash:0,upi:0,card:0};
-    s.bills+=r.bills||0; s.sales+=r.sales||0; s.cash+=r.cash||0; s.upi+=r.upi||0; s.card+=r.card||0; });
+  rows.forEach(r=>{ const sh=byShop[r.shopId]=byShop[r.shopId]||{bills:0,sales:0,cash:0,upi:0,card:0,days:{}};
+    sh.bills+=r.bills||0; sh.sales+=r.sales||0; sh.cash+=r.cash||0; sh.upi+=r.upi||0; sh.card+=r.card||0;
+    sh.days[r.date]=1; });
   // Product-wise and category-wise, across the whole period
   const items={}, cats={};
   rows.forEach(r=>{
@@ -2154,20 +2249,33 @@ function drawNightly(rows){
   });
   const top=Object.entries(items).map(([k,v])=>Object.assign({sku:k},v)).sort((a,b)=>b.sales-a.sales);
   const catList=Object.entries(cats).map(([k,v])=>({k:k,v:v.sales,lab:money2(v.sales)})).sort((a,b)=>b.v-a.v);
+  const shopRows=Object.entries(byShop).sort((a,b)=>b[1].sales-a[1].sales);
   el.innerHTML=`
     <div class="grid g4" style="margin-bottom:13px">
-      ${kpiC('Total sale',money2(tot.sales),tot.bills+' bills')}
+      ${kpiC('Total sale',money2(tot.sales),tot.bills+' bills · '+esc(rd.label))}
       ${kpiC('Cash',money2(tot.cash),pct(tot.cash,tot.sales))}
       ${kpiC('UPI',money2(tot.upi),pct(tot.upi,tot.sales))}
       ${kpiC('Card',money2(tot.card),pct(tot.card,tot.sales))}
     </div>
-    <div class="card"><div class="card-hd"><h3>Shop by shop</h3></div><div class="tw"><table>
-      <thead><tr><th>Shop</th><th class="num">Bills</th><th class="num">Sale</th><th class="num">Cash</th><th class="num">UPI</th><th class="num">Card</th></tr></thead>
-      <tbody>${Object.entries(byShop).sort((a,b)=>b[1].sales-a[1].sales).map(([id,v])=>`<tr>
-        <td><b>${esc(shopName(id))}</b></td><td class="num tnum">${v.bills}</td>
+    <div class="card"><div class="card-hd"><h3>Shop by shop</h3>
+      <span class="note">${shopRows.length} shop${shopRows.length===1?'':'s'} sold in this period</span></div><div class="tw"><table>
+      <thead><tr><th>Shop</th><th class="num">Days</th><th class="num">Bills</th><th class="num">Sale</th>
+        <th class="num">Avg bill</th><th class="num">Cash</th><th class="num">UPI</th><th class="num">Card</th><th class="num">Share</th></tr></thead>
+      <tbody>${shopRows.map(([id,v])=>`<tr>
+        <td><b>${esc(shopName(id))}</b></td>
+        <td class="num tnum">${Object.keys(v.days).length}</td>
+        <td class="num tnum">${v.bills}</td>
         <td class="num tnum" style="font-weight:700">${money2(v.sales)}</td>
+        <td class="num tnum">${money2(v.bills?v.sales/v.bills:0)}</td>
         <td class="num tnum">${money2(v.cash)}</td><td class="num tnum">${money2(v.upi)}</td><td class="num tnum">${money2(v.card)}</td>
-      </tr>`).join('')}</tbody></table></div></div>
+        <td class="num tnum" style="color:var(--ink-3)">${pct(v.sales,tot.sales)}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td><b>All shops</b></td><td class="num tnum">—</td>
+        <td class="num tnum"><b>${tot.bills}</b></td><td class="num tnum"><b>${money2(tot.sales)}</b></td>
+        <td class="num tnum">${money2(tot.bills?tot.sales/tot.bills:0)}</td>
+        <td class="num tnum">${money2(tot.cash)}</td><td class="num tnum">${money2(tot.upi)}</td>
+        <td class="num tnum">${money2(tot.card)}</td><td class="num tnum">100%</td></tr></tfoot>
+      </table></div></div>
     <div class="card"><div class="card-hd"><h3>Category-wise</h3></div><div class="card-b">
       ${catList.length?hBars(catList.slice(0,10),'var(--accent)'):'<div class="empty">No category data yet — it starts filling from the next bill.</div>'}
     </div></div>
@@ -2195,7 +2303,8 @@ function exportNightly(){
   }));
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv'}));
-  a.download='arthanote-sales-'+iso(new Date())+'.csv';
+  const rd=rangeDates();
+  a.download='arthanote-sales-'+rd.from+'_to_'+rd.to+'.csv';
   a.click(); URL.revokeObjectURL(a.href);
 }
 
@@ -2327,7 +2436,10 @@ function myRole(){
   if(DEMO_ADMIN) return 'owner';
   if(!ME) return 'cashier';
   if(ME.role&&ROLES[ME.role]) return ME.role;
-  return ME.businessId===ME.uid?'owner':'cashier';
+  // Both fields must actually be there. Without the uid check, a half-loaded
+  // profile with neither field set matched undefined===undefined and was
+  // handed the owner's whole screen list.
+  return (ME.uid&&ME.businessId===ME.uid)?'owner':'cashier';
 }
 function canSee(key){
   if(DEMO_ADMIN) return true;
@@ -2879,23 +2991,101 @@ function clearDemoData(){
    screens show the shop's own takings instead of nothing at all.
    Days are merged across shops, because the Dashboard is a whole-business
    view; the Nightly check is where the per-shop split lives. */
+/* ══════════════ ROLLUPS, PER SHOP ═══════════════════════════════════════
+   ⚠️ THIS USED TO MIX THE SHOPS TOGETHER.
+   Every rollup document read was merged into one date-keyed object with no
+   regard for which shop it came from — so the dashboard and all fifteen
+   reports showed six shops' takings while the header named one of them.
+   Four vegetable shops with different prices in different towns, added up
+   and labelled "Thuckalay". That is not a rounding problem, it is the wrong
+   number entirely.
+
+   The raw rows are kept as they were read, keyed by shop AND day. ROLL is
+   DERIVED from them for whichever shop is in scope, so switching shops is
+   instant and never re-reads Firestore. Combining shops is still possible —
+   it is just a choice now ("All shops"), never an accident. */
+let LIVE_ROWS={};                 // "shopId|date" -> the rollup document
+let rollScope='';                 // '' = every shop, otherwise one shopId
+
+function rollKey(shopId,date){ return shopId+'|'+date; }
+
+/* Read any day in the window that is not already held. A range the owner
+   has already looked at costs nothing to look at again. */
+function ensureRollups(force){
+  if(DEMO_ADMIN||!ME||!FB_OK) return Promise.resolve();
+  const {from,to}=rangeDates();
+  const ids=Object.keys(ME.shops||{});
+  const want=[];
+  for(let d=from; d<=to; d=dayShift(d,1)){
+    ids.forEach(sid=>{ if(force||!(rollKey(sid,d) in LIVE_ROWS)) want.push([sid,d]); });
+    if(want.length>3000) break;
+  }
+  if(!want.length){ rebuildRoll(); return Promise.resolve(); }
+  // documentId() 'in' takes 30 at a time — one query per 30 documents rather
+  // than one round trip per document.
+  const chunks=[];
+  for(let i=0;i<want.length;i+=30) chunks.push(want.slice(i,i+30));
+  return Promise.all(chunks.map(ch=>
+    FS.collection('pos_rollups')
+      .where(firebase.firestore.FieldPath.documentId(),'in',
+             ch.map(([sid,d])=>ME.businessId+'_'+sid+'_'+d))
+      .get()
+      .then(sn=>{
+        // Mark every day asked for, so a day with no sales is remembered as
+        // "read, and empty" and is not asked for again on every redraw.
+        ch.forEach(([sid,d])=>{ if(!(rollKey(sid,d) in LIVE_ROWS)) LIVE_ROWS[rollKey(sid,d)]=null; });
+        sn.docs.forEach(doc=>{ const r=doc.data();
+          if(r&&r.date&&r.shopId) LIVE_ROWS[rollKey(r.shopId,r.date)]=r; });
+      })
+      .catch(e=>{ console.warn('rollup read:',e&&e.message); })
+  )).then(()=>{ rebuildRoll(); });
+}
+
+/* ROLL, for the shop in scope. Everything downstream — the dashboard, the
+   fifteen reports, the accounting screen — reads ROLL and therefore reads
+   one shop, without any of them needing to know that. */
+function rebuildRoll(){
+  ROLL={};
+  Object.entries(LIVE_ROWS).forEach(([k,r])=>{
+    if(!r) return;
+    if(rollScope&&r.shopId!==rollScope) return;
+    const d=r.date; if(!d) return;
+    const e=ROLL[d]=ROLL[d]||{date:d,bills:0,sales:0,cash:0,upi:0,card:0,items:{},synth:false};
+    e.bills+=r.bills||0; e.sales+=r.sales||0;
+    e.cash+=r.cash||0; e.upi+=r.upi||0; e.card+=r.card||0;
+    Object.entries(r.items||{}).forEach(([kk,v])=>{
+      const i=e.items[kk]=e.items[kk]||{name:v.name||kk,qty:0,amt:0};
+      i.qty+=v.qty||0; i.amt+=v.sales||0; if(v.name) i.name=v.name;
+    });
+  });
+  Object.values(ROLL).forEach(e=>['sales','cash','upi','card'].forEach(k=>e[k]=+e[k].toFixed(2)));
+  saveRollups();
+}
+
+/* The rows themselves, for anything that needs them shop by shop rather
+   than merged — the nightly check, chiefly. */
+/* What the figures on this screen are about. Said out loud, next to them. */
+function scopeLabel(){
+  if(DEMO_ADMIN||!ME) return 'Demo shop';
+  const ids=Object.keys(ME.shops||{});
+  if(rollScope&&ME.shops[rollScope]) return shopName(rollScope);
+  return ids.length>1?('All '+ids.length+' shops'):(shopName(ids[0])||'This shop');
+}
+function rollupRowsInRange(scope){
+  const {from,to}=rangeDates(), out=[];
+  Object.values(LIVE_ROWS).forEach(r=>{
+    if(!r||!r.date) return;
+    if(r.date<from||r.date>to) return;
+    if(scope&&r.shopId!==scope) return;
+    out.push(r);
+  });
+  return out;
+}
+
 function loadLiveRollups(){
   if(DEMO_ADMIN||!ME||!FB_OK) return Promise.resolve();
-  return fetchRollups(90).then(rows=>{
-    ROLL={};
-    rows.forEach(r=>{
-      const d=r.date; if(!d) return;
-      const e=ROLL[d]=ROLL[d]||{date:d,bills:0,sales:0,cash:0,upi:0,card:0,items:{},synth:false};
-      e.bills+=r.bills||0; e.sales+=r.sales||0;
-      e.cash+=r.cash||0; e.upi+=r.upi||0; e.card+=r.card||0;
-      Object.entries(r.items||{}).forEach(([k,v])=>{
-        const i=e.items[k]=e.items[k]||{name:v.name||k,qty:0,amt:0};
-        i.qty+=v.qty||0; i.amt+=v.sales||0; if(v.name) i.name=v.name;
-      });
-    });
-    Object.values(ROLL).forEach(e=>['sales','cash','upi','card'].forEach(k=>e[k]=+e[k].toFixed(2)));
-    saveRollups();
-  }).catch(e=>{ console.warn('could not read rollups:',e&&e.message); });
+  rollScope=ME.locked?(ME.scope||''):(rollScope||ME.scope||'');
+  return ensureRollups(true);
 }
 function signOutAdmin(){
   if(FB_OK&&AUTH.currentUser) AUTH.signOut().catch(()=>{});
@@ -3000,11 +3190,15 @@ function renderShopBar(){
   const bar=document.getElementById('shopbar'); if(!bar) return;
   if(DEMO_ADMIN||!ME||!ME.shops||!Object.keys(ME.shops).length){ bar.classList.add('hidden'); return; }
   const ids=Object.keys(ME.shops);
-  const cur=(priceShop&&ME.shops[priceShop])?priceShop:(ME.scope||ids[0]);
-  priceShop=cur;
-  const sh=ME.shops[cur]||{};
-  document.getElementById('sb-icon').textContent=sh.icon||'🏪';
-  document.getElementById('sb-name').textContent=sh.name||cur;
+  /* rollScope is the truth about what the numbers cover, so the header reads
+     from it — otherwise the label and the figures can disagree, which is
+     exactly the bug this replaced. '' means every shop, and it says so. */
+  const cur=rollScope&&ME.shops[rollScope]?rollScope:(ME.locked?(ME.scope||ids[0]):rollScope);
+  if(cur) priceShop=cur;
+  else if(!priceShop||!ME.shops[priceShop]) priceShop=ME.scope||ids[0];
+  const sh=cur?(ME.shops[cur]||{}):{};
+  document.getElementById('sb-icon').textContent=cur?(sh.icon||'🏪'):'🏬';
+  document.getElementById('sb-name').textContent=cur?(sh.name||cur):('All '+ids.length+' shops');
   const sel=document.getElementById('sb-sel');
   // Locked to one shop by its own subdomain, or only one shop exists: then
   // the name is a label, not a menu.
@@ -3012,17 +3206,23 @@ function renderShopBar(){
   sel.classList.toggle('hidden',!canSwitch);
   bar.style.cursor=canSwitch?'pointer':'default';
   bar.title=canSwitch?'Switch shop':(sh.name||'');
-  if(canSwitch) sel.innerHTML=ids.map(id=>
-    `<option value="${esc(id)}" ${id===cur?'selected':''}>${esc(ME.shops[id].name||id)}</option>`).join('');
+  if(canSwitch) sel.innerHTML=
+    `<option value="" ${!cur?'selected':''}>All ${ids.length} shops — added together</option>`
+    +ids.map(id=>`<option value="${esc(id)}" ${id===cur?'selected':''}>${esc(ME.shops[id].name||id)}</option>`).join('');
   bar.classList.remove('hidden');
 }
 function switchShop(id){
-  if(!ME||!ME.shops[id]) return;
-  priceShop=id; ME.scope=id;
+  if(!ME) return;
+  if(id&&!ME.shops[id]) return;
+  rollScope=id||'';                 // '' is a real choice: every shop
+  if(id){ priceShop=id; ME.scope=id; }
+  rebuildRoll();                    // the numbers follow the header, always
   renderShopBar();
-  // Redraw whatever is open so it is about the shop now named in the header.
-  go(page);
-  toast('Now showing '+shopName(id));
+  Promise.resolve(ensureRollups()).then(()=>{
+    rebuildRoll();
+    go(page);                       // redraw under the shop now named above
+  });
+  toast(id?('Now showing '+shopName(id)):'Now showing every shop added together');
 }
 function updateSrcPill(){
   renderShopBar();

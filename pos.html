@@ -159,10 +159,11 @@ header.top{height:52px;flex-shrink:0;background:var(--surface);border-bottom:1px
 @media(max-width:1100px){.work{grid-template-columns:1fr 340px}}
 .left{min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line)}
 .searchbar{padding:9px 10px;background:var(--surface);border-bottom:1px solid var(--line);display:flex;gap:8px;flex-shrink:0}
-.field{position:relative;flex:1}
+.field{position:relative;flex:1;margin:0}
 .field svg{position:absolute;left:11px;top:12px;width:16px;height:16px;color:var(--ink-3);pointer-events:none}
 .field .inp{padding-left:34px}
 .field.sku{flex:0 0 132px}
+#sku-input{padding-right:32px}
 .field .clr{position:absolute;right:6px;top:8px;width:24px;height:24px;border-radius:6px;display:grid;place-items:center;color:var(--ink-3)}
 .field .clr:hover{background:var(--line-2);color:var(--ink)}
 .cats{display:flex;gap:6px;padding:9px 10px 0;overflow-x:auto;flex-shrink:0}
@@ -197,6 +198,7 @@ header.top{height:52px;flex-shrink:0;background:var(--surface);border-bottom:1px
 .searchbar .field{position:relative}
 /* The suggestion list sits over the grid, so a counter can start typing and
    commit without ever looking away from the search box. */
+#sugg-sku{right:auto;width:min(430px,86vw)}
 .sugg{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:40;max-height:340px;overflow:auto;
   background:var(--surface);border:1px solid var(--line);border-radius:11px;
   box-shadow:0 10px 28px rgba(0,0,0,.14);padding:5px}
@@ -599,11 +601,20 @@ table.d tr.click:hover td{background:var(--raised)}
     <div class="work">
       <div class="left">
         <div class="searchbar">
-          <div class="field sku">
+          <!-- A FORM on purpose. On Android the soft keyboard's Go key often
+               never arrives as a keydown, so a code typed on a phone looked
+               like it did nothing at all. A form still submits, and skuKey()
+               cancels the submit on the keyboards that DO send Enter, so it
+               fires exactly once either way. The ⏎ button is the third
+               route, for anyone who would rather tap than hunt for Go. -->
+          <form class="field sku" autocomplete="off" onsubmit="event.preventDefault();skuGo();return false">
             <i data-i="scan-barcode"></i>
-            <input class="inp mono" id="sku-input" placeholder="SKU" style="text-transform:uppercase;font-weight:600"
-              onkeydown="if(event.key==='Enter')skuEnter()">
-          </div>
+            <input class="inp mono" id="sku-input" placeholder="SKU" autocomplete="off"
+              enterkeyhint="go" aria-label="Item code" style="text-transform:uppercase;font-weight:600"
+              onkeydown="skuKey(event)" oninput="skuInput()">
+            <button class="clr" type="submit" aria-label="Add this code" title="Add this code">&#8629;</button>
+            <div id="sugg-sku" class="sugg hidden" role="listbox"></div>
+          </form>
           <div class="field">
             <i data-i="search"></i>
             <input class="inp" id="search-input" placeholder="Search item / தமிழ் பெயர் / barcode"
@@ -983,7 +994,28 @@ function moveToEnd(c,it){
   if(i>=0&&i!==c.items.length-1){ c.items.splice(i,1); c.items.push(it); }
 }
 const money=n=>'₹'+(Math.round((n+Number.EPSILON)*100)/100).toFixed(2);
-const qtyFmt=(q,u)=>u==='kg'?Number(q).toFixed(3):String(Math.round(q));
+/* Units that are measured out rather than counted. Anything on this list
+   always bills to three decimals. */
+const WEIGHED=['kg','g','l','ml','ltr','litre','liter','gram','grams','kilo','kgs'];
+const isWeighed=u=>WEIGHED.includes(String(u||'').trim().toLowerCase());
+/* A QUANTITY IS NEVER ROUNDED TO ZERO.
+   This used to be Math.round() for every unit that was not kg, which turned
+   a typed 0.250 into 0 and put a free line on the bill. It bit hard because
+   a price list imported from a spreadsheet calls almost everything "piece",
+   including tomatoes — so the cashier weighs 250g, types .250, and the till
+   silently bills nothing. Counted units still keep whole numbers when a
+   whole number is what was typed; a fraction is honoured as a fraction. */
+function roundQty(q,u){
+  const n=Number(q);
+  if(!isFinite(n)) return 0;
+  if(isWeighed(u)) return +n.toFixed(3);
+  return Number.isInteger(n)?n:+n.toFixed(3);
+}
+const qtyFmt=(q,u)=>{
+  const n=Number(q)||0;
+  if(isWeighed(u)) return n.toFixed(3);
+  return Number.isInteger(n)?String(n):String(+n.toFixed(3));
+};
 const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -1579,6 +1611,10 @@ function matches(p,q){
    are so nobody thinks the rest do not exist. */
 const SUGG_MAX=8;
 let suggList=[], suggAt=-1;
+/* Which box the open list belongs to. The SKU field gets its own dropdown
+   so a code that matches several items can be resolved where the cashier is
+   already typing, instead of throwing the cursor into the search box. */
+let suggBox='sugg';
 
 function suggMatches(q){
   q=q.toLowerCase().trim();
@@ -1614,40 +1650,58 @@ function drawSuggestions(){
   const q=(document.getElementById('search-input').value||'').trim();
   if(q.length<2){ closeSuggestions(); return; }
   const all=suggMatches(q);
-  suggList=all.slice(0,SUGG_MAX); suggAt=suggList.length?0:-1;
-  if(!all.length){
-    box.innerHTML=`<div class="s-none">Nothing matches “${esc(q)}”.
-      <button class="btn" style="height:30px;margin-left:8px" onclick="closeSuggestions();openCustomItem()">Add as custom item</button></div>`;
-    box.classList.remove('hidden'); return;
-  }
-  box.innerHTML=suggList.map((p,i)=>`
+  if(all.length) return suggRender(all.slice(0,SUGG_MAX),all.length,q,'sugg');
+  closeSuggestions(); suggBox='sugg';
+  box.innerHTML=`<div class="s-none">Nothing matches “${esc(q)}”.
+    <button class="btn" style="height:30px;margin-left:8px" onclick="closeSuggestions();openCustomItem()">Add as custom item</button></div>`;
+  box.classList.remove('hidden');
+}
+function closeSuggestions(){
+  ['sugg','sugg-sku'].forEach(id=>{
+    const box=document.getElementById(id);
+    if(box){ box.classList.add('hidden'); box.innerHTML=''; }
+  });
+  suggList=[]; suggAt=-1;
+}
+/* One renderer, two anchors. */
+function suggRender(list,total,q,boxId){
+  const box=document.getElementById(boxId); if(!box) return;
+  // Only ever one list on screen. Without this, typing in search while the
+  // SKU picker was open left two lists overlapping the grid.
+  const other=document.getElementById(boxId==='sugg'?'sugg-sku':'sugg');
+  if(other){ other.classList.add('hidden'); other.innerHTML=''; }
+  suggBox=boxId; suggList=list; suggAt=list.length?0:-1;
+  box.innerHTML=list.map((p,i)=>`
     <div class="s-row ${i===suggAt?'on':''}" role="option" aria-selected="${i===suggAt}"
          onmouseenter="suggHover(${i})" onclick="suggPick(${i})">
       <div class="s-nm">${hi(p.nameEn,q)}
         ${p.nameTa?`<div class="s-ta ta">${hi(p.nameTa,q)}</div>`:''}
-        <div class="s-sku">${esc(p.sku||'')}${p.stock<=0?' · out of stock':''}</div></div>
+        <div class="s-sku">${hi(p.sku||'',q)}${p.stock<=0?' · out of stock':''}</div></div>
       <div style="text-align:right">
         <div class="s-pr">₹${p.price}</div>
         <div class="s-un">/${esc(p.unit)}</div></div>
     </div>`).join('')
-    +(all.length>SUGG_MAX?`<div class="s-foot">${all.length-SUGG_MAX} more — keep typing to narrow it down</div>`:'');
+    +(total>list.length?`<div class="s-foot">${total-list.length} more — keep typing to narrow it down</div>`:'');
   box.classList.remove('hidden');
-}
-function closeSuggestions(){
-  const box=document.getElementById('sugg');
-  if(box){ box.classList.add('hidden'); box.innerHTML=''; }
-  suggList=[]; suggAt=-1;
 }
 function suggHover(i){
   suggAt=i;
-  document.querySelectorAll('#sugg .s-row').forEach((el,k)=>el.classList.toggle('on',k===i));
+  document.querySelectorAll('#'+suggBox+' .s-row').forEach((el,k)=>el.classList.toggle('on',k===i));
 }
+/* Picking a name off the suggestion list ALWAYS opens the quantity box.
+   Scanner mode (scanAddsOne) is about a barcode gun sending a code and an
+   Enter together — it has nothing to do with a cashier typing "thakkali"
+   and choosing a row. Routing this through addOne() meant that in a shop
+   with scanner mode on, searching a name dropped 1 piece into the cart with
+   no prompt, which is exactly wrong for produce sold by weight. */
 function suggPick(i){
   const p=suggList[i]; if(!p) return;
+  const from=suggBox;
   closeSuggestions();
-  document.getElementById('search-input').value='';
+  const box=document.getElementById(from==='sugg-sku'?'sku-input':'search-input');
+  if(box) box.value='';
   renderProducts();
-  addOne(p);
+  addToCart(p.id);
 }
 /* Arrows move, Enter commits, Escape backs out. Enter with nothing
    highlighted still commits the top row, because that is what someone who
@@ -1663,7 +1717,7 @@ function suggKey(e){
   if(e.key==='Escape'){ e.preventDefault(); closeSuggestions(); return; }
 }
 function scrollSugg(){
-  const el=document.querySelector('#sugg .s-row.on');
+  const el=document.querySelector('#'+suggBox+' .s-row.on');
   if(el&&el.scrollIntoView) el.scrollIntoView({block:'nearest'});
 }
 // Clicking anywhere else closes it — including on a phone, where there is no
@@ -1671,6 +1725,7 @@ function scrollSugg(){
 addEventListener('pointerdown',e=>{
   if(!document.getElementById('sugg')) return;
   if(e.target.closest('#sugg')||e.target.closest('#search-input')) return;
+  if(e.target.closest('.field.sku')) return;   // the whole SKU field, ⏎ button included
   closeSuggestions();
 },true);
 
@@ -1717,42 +1772,77 @@ function renderProducts(){
 }
 function clearSearch(){
   closeSuggestions(); const s=document.getElementById('search-input'); s.value=''; renderProducts(); s.focus(); }
-/* An exact-match-only SKU box fails on everything a counter actually types:
-   a code with a stray space, a shop that uses short codes, a barcode read
-   half-way. Widen it in strict-to-loose order and never guess when the
-   answer is ambiguous — an ambiguous code drops into search instead, which
-   shows the choices rather than billing the wrong item. */
+/* ══════════════ THE SKU / CODE BOX ══════════════
+   An exact-match-only box fails on everything a counter actually types: a
+   code with a stray space, a shop that uses short codes, a barcode read
+   half-way. Matching widens in strict-to-loose order and never guesses when
+   the answer is ambiguous.
+
+   Rules, in the order a cashier meets them:
+     1. A code that identifies exactly one item opens the quantity box for
+        it (scanner mode is the only thing that skips the box, and only for
+        counted units — see addOne).
+     2. A code that fits several items shows those items in a list UNDER THE
+        SKU BOX, with the cursor left where it is. The old build silently
+        moved the cursor into the search field, so typing "10" looked like
+        the key had done nothing at all.
+     3. Text that is not a code is matched against names — again in the SKU
+        box's own list, so one Enter is never punished with a retype.
+     4. Nothing matches: say so and keep what was typed, selected. */
+function skuCandidates(v,raw){
+  const list=onSale();
+  const norm=x=>String(x||'').toLowerCase().replace(/\s+/g,'');
+  const exact=list.filter(x=>norm(x.sku)===v||norm(x.barcode)===v);
+  if(exact.length) return {hits:exact,kind:'code'};
+  const pre=list.filter(x=>norm(x.sku).startsWith(v)||norm(x.barcode).startsWith(v));
+  if(pre.length) return {hits:pre,kind:'code'};
+  const sub=list.filter(x=>norm(x.sku).includes(v)||norm(x.barcode).includes(v));
+  if(sub.length) return {hits:sub,kind:'code'};
+  const byName=list.filter(x=>matches(x,raw));
+  return {hits:byName,kind:'name'};
+}
 function skuEnter(){
   const el=document.getElementById('sku-input');
   const raw=el.value.trim(), v=raw.toLowerCase().replace(/\s+/g,'');
-  if(!v) return;
-  const list=onSale();
-  const norm=x=>String(x||'').toLowerCase().replace(/\s+/g,'');
+  if(!v){ closeSuggestions(); return; }
+  const {hits,kind}=skuCandidates(v,raw);
 
-  let p=list.find(x=>norm(x.sku)===v) || list.find(x=>norm(x.barcode)===v);
-  if(!p){
-    const pre=list.filter(x=>norm(x.sku).startsWith(v)||norm(x.barcode).startsWith(v));
-    if(pre.length===1) p=pre[0];
-    else if(!pre.length){
-      const sub=list.filter(x=>norm(x.sku).includes(v)||norm(x.barcode).includes(v));
-      if(sub.length===1) p=sub[0];
-    }
-  }
-  if(p){ addOne(p); el.value=''; return; }
+  if(hits.length===1){ closeSuggestions(); el.value=''; addOne(hits[0]); return; }
 
-  // Not a code — hand it to search rather than making the cashier retype it.
-  const si=document.getElementById('search-input');
-  const hits=list.filter(x=>matches(x,raw));
-  el.value='';
   if(hits.length){
-    si.value=raw; catFilter=''; gridHidden=false; saveGridPref();
-    renderCats(); renderProducts(); drawSuggestions();
-    toast(hits.length+' item'+(hits.length===1?'':'s')+' match “'+raw+'” — pick one');
-    if(!isMobile()) si.focus();
-  }else{
-    toast('Nothing found for “'+raw+'”','error');
-    el.value=raw; el.select();
+    suggRender(hits.slice(0,SUGG_MAX),hits.length,raw,'sugg-sku');
+    toast(hits.length+(kind==='code'?' items share that code':' items match “'+raw+'”')
+          +' — pick one (↑ ↓ then Enter)');
+    el.focus();
+    return;
   }
+  closeSuggestions();
+  toast('Nothing found for “'+raw+'”','error');
+  el.select();
+}
+/* Typing keeps the SKU list live, so a second digit narrows six matches to
+   one without another Enter. */
+function skuInput(){
+  const el=document.getElementById('sku-input');
+  const raw=el.value.trim(), v=raw.toLowerCase().replace(/\s+/g,'');
+  if(suggBox!=='sugg-sku'||!suggList.length) return;
+  if(v.length<1){ closeSuggestions(); return; }
+  const {hits}=skuCandidates(v,raw);
+  if(hits.length) suggRender(hits.slice(0,SUGG_MAX),hits.length,raw,'sugg-sku');
+  else closeSuggestions();
+}
+/* Enter commits: the highlighted row when the list is open, otherwise a
+   fresh lookup. Arrows and Escape drive the list. */
+function skuGo(){
+  if(suggBox==='sugg-sku'&&suggList.length) suggPick(suggAt<0?0:suggAt);
+  else skuEnter();
+}
+function skuKey(e){
+  const open=suggBox==='sugg-sku'&&suggList.length>0;
+  if(open&&(e.key==='ArrowDown'||e.key==='ArrowUp'||e.key==='Escape')){ suggKey(e); return; }
+  // Cancelling the keydown also cancels the form's implicit submit, so a
+  // keyboard that does send Enter runs skuGo() once, not twice.
+  if(e.key==='Enter'){ e.preventDefault(); skuGo(); }
 }
 
 /* ══════════════ QUANTITY PROMPT ══════════════
@@ -1767,7 +1857,6 @@ let _qtyProduct=null;
    — twenty extra keys on a twenty-item basket. Scanning a packet means one
    packet. Tapping the tile still opens the box, because a finger on a tile
    is not a statement about quantity. */
-const WEIGHED=['kg','g','l','ml'];
 function addOne(p){
   if(!p) return;
   /* ASKING IS THE DEFAULT. Skipping the quantity box only makes sense with a
@@ -1776,10 +1865,10 @@ function addOne(p){
      the item and is about to say how much — taking that box away from them
      silently adds one and looks like the key did nothing. So the shop opts
      in, and even then only for units that are counted rather than weighed. */
-  if(!DB.settings.scanAddsOne||WEIGHED.includes(p.unit)) return addToCart(p.id);
+  if(!DB.settings.scanAddsOne||isWeighed(p.unit)) return addToCart(p.id);
   const c=cart(), net=+p.price||0;
   const ex=c.items.find(i=>i.pid===p.id&&i.rate===net);
-  if(ex) ex.qty=+(ex.qty+1).toFixed(3);
+  if(ex) ex.qty=roundQty(ex.qty+1,p.unit);
   else c.items.push({pid:p.id,sku:p.sku,cat:p.category,gst:p.gst,name:p.nameEn,
                      nameTa:p.nameTa,unit:p.unit,rate:net,qty:1});
   saveCarts(); renderAll();
@@ -1792,11 +1881,15 @@ function addToCart(pid){
   document.getElementById('q-name-ta').textContent=p.nameTa||'';
   document.getElementById('q-rate').value=p.price;
   document.getElementById('q-disc').value=0;
-  document.getElementById('q-qty').value=p.unit==='kg'?'':1;
-  document.getElementById('q-unit-lbl').textContent=p.unit==='kg'?'(in kg — e.g. 0.750)':'(pieces)';
-  const chips=p.unit==='kg'?[0.25,0.5,0.75,1,1.5,2,5]:[1,2,3,5,10,12];
+  const w=isWeighed(p.unit);
+  document.getElementById('q-qty').value=w?'':1;
+  /* The label names the item's own unit rather than assuming kg, and says
+     decimals are allowed either way — a shop whose price list calls
+     tomatoes "piece" still needs to sell a quarter of one. */
+  document.getElementById('q-unit-lbl').textContent=w?`(in ${p.unit} — e.g. 0.750)`:`(in ${p.unit||'pieces'} — decimals allowed)`;
+  const chips=w?[0.25,0.5,0.75,1,1.5,2,5]:[1,2,3,5,10,12];
   document.getElementById('q-chips').innerHTML=chips.map(v=>
-    `<button onclick="document.getElementById('q-qty').value=${v};qtyCalc()">${v}${p.unit==='kg'?'':'×'}</button>`).join('');
+    `<button onclick="document.getElementById('q-qty').value=${v};qtyCalc()">${v}${w?'':'×'}</button>`).join('');
   qtyCalc(); show('m-qty');
   setTimeout(()=>{ const q=document.getElementById('q-qty'); q.focus(); q.select(); },40);
 }
@@ -1816,12 +1909,13 @@ function qtyAdd(){
   let qty=parseFloat(document.getElementById('q-qty').value);
   if(!(qty>0)) { toast('Enter a quantity','error'); document.getElementById('q-qty').focus(); return; }
   if(!(rate>0)){ toast('Enter a rate','error');     document.getElementById('q-rate').focus(); return; }
-  qty=p.unit==='kg'?+qty.toFixed(3):Math.round(qty);
+  qty=roundQty(qty,p.unit);
+  if(!(qty>0)){ toast('Quantity is too small to bill','error'); document.getElementById('q-qty').focus(); return; }
   const net=+(rate*(1-disc/100)).toFixed(2);
   const c=cart();
   // Same product at the same effective rate merges instead of stacking lines
   const ex=c.items.find(i=>i.pid===p.id&&i.rate===net);
-  if(ex){ ex.qty=+(ex.qty+qty).toFixed(3); moveToEnd(c,ex); }
+  if(ex){ ex.qty=roundQty(ex.qty+qty,p.unit); moveToEnd(c,ex); }
   // sku + cat travel with the line so the rollup can break the day down by
   // product and by category without ever re-reading a bill.
   else c.items.push({pid:p.id,sku:p.sku,cat:p.category,gst:p.gst,name:p.nameEn,nameTa:p.nameTa,unit:p.unit,rate:net,qty});
@@ -1845,13 +1939,13 @@ function addCustomItem(){
 function setQty(i,v){
   const it=cart().items[i]; if(!it) return;
   let q=parseFloat(v); if(isNaN(q)||q<0) q=0;
-  it.qty=it.unit==='kg'?+q.toFixed(3):Math.round(q);
+  it.qty=roundQty(q,it.unit);
   saveCarts(); renderCart();
 }
 function bumpQty(i,d){
   const it=cart().items[i]; if(!it) return;
-  const step=it.unit==='kg'?0.25:1;
-  it.qty=Math.max(0,+(it.qty+d*step).toFixed(3));
+  const step=isWeighed(it.unit)?0.25:1;
+  it.qty=Math.max(0,roundQty(it.qty+d*step,it.unit));
   saveCarts(); renderCart();
 }
 function removeItem(i){ cart().items.splice(i,1); saveCarts(); renderAll(); }
