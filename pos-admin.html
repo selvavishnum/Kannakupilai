@@ -2436,7 +2436,10 @@ function myRole(){
   if(DEMO_ADMIN) return 'owner';
   if(!ME) return 'cashier';
   if(ME.role&&ROLES[ME.role]) return ME.role;
-  return ME.businessId===ME.uid?'owner':'cashier';
+  // Both fields must actually be there. Without the uid check, a half-loaded
+  // profile with neither field set matched undefined===undefined and was
+  // handed the owner's whole screen list.
+  return (ME.uid&&ME.businessId===ME.uid)?'owner':'cashier';
 }
 function canSee(key){
   if(DEMO_ADMIN) return true;
